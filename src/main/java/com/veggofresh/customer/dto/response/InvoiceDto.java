@@ -32,4 +32,6 @@ public class InvoiceDto {
     private String promoCode;
     private BigDecimal total;
     private String paymentMethod;
+    /** "COD" or "ONLINE". */
+    private String paymentMode;
 }

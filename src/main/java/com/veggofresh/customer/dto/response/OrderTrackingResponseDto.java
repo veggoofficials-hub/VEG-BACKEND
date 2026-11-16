@@ -33,6 +33,10 @@ public class OrderTrackingResponseDto {
     private List<StatusTimelineDto> statusTimeline;
     private List<OrderItemResponseDto> items;
     private BigDecimal total;
+    /** "COD" or "ONLINE". */
+    private String paymentMode;
+    /** What is still to be paid in cash at the door: the total for a COD order, zero for ONLINE. */
+    private BigDecimal amountToCollect;
     private String deliveryPhotoUrl;
     private String deliveryLocationNote;
     private Instant deliveredAt;

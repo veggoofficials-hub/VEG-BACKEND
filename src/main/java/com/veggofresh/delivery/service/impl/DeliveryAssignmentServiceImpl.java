@@ -767,10 +767,14 @@ public class DeliveryAssignmentServiceImpl implements DeliveryAssignmentService 
         // nearby-requests list if order lookup fails for any reason.
         List<String> itemThumbnails = null;
         BigDecimal orderDeliveryFee = null;
+        String paymentMode = null;
+        BigDecimal amountToCollect = null;
         try {
             var order = customerOrderService.getOrderByIdForFulfillment(a.getOrderId());
             itemThumbnails = order.getItemThumbnails();
             orderDeliveryFee = order.getDeliveryFee();
+            paymentMode = order.getPaymentMode();
+            amountToCollect = order.getAmountToCollect();
         } catch (BusinessException e) {
             log.warn("Could not resolve item thumbnails for assignment {} (orderId={}): {}",
                     a.getId(), a.getOrderId(), e.getMessage());
@@ -790,6 +794,8 @@ public class DeliveryAssignmentServiceImpl implements DeliveryAssignmentService 
                 .shopName(a.getShopName())
                 .shopAddress(a.getShopAddress())
                 .estimatedEarning(resolveDeliveryFee(orderDeliveryFee))
+                .paymentMode(paymentMode)
+                .amountToCollect(amountToCollect)
                 .itemThumbnails(itemThumbnails)
                 .build();
     }
@@ -855,12 +861,16 @@ public class DeliveryAssignmentServiceImpl implements DeliveryAssignmentService 
         BigDecimal orderTotal = null;
         BigDecimal orderDeliveryFee = null;
         List<String> itemThumbnails = null;
+        String paymentMode = null;
+        BigDecimal amountToCollect = null;
         try {
             var order = customerOrderService.getOrderByIdForFulfillment(a.getOrderId());
             customerName = order.getCustomerName();
             orderTotal = order.getTotalAmount();
             orderDeliveryFee = order.getDeliveryFee();
             itemThumbnails = order.getItemThumbnails();
+            paymentMode = order.getPaymentMode();
+            amountToCollect = order.getAmountToCollect();
             items = order.getItems().stream()
                     .map(item -> DeliveryAssignmentResponseDto.OrderItemSummaryDto.builder()
                             .productId(item.getProductId())
@@ -892,6 +902,8 @@ public class DeliveryAssignmentServiceImpl implements DeliveryAssignmentService 
                 .customerName(customerName)
                 .customerPhone(customerPhone)
                 .estimatedEarning(resolveDeliveryFee(orderDeliveryFee))
+                .paymentMode(paymentMode)
+                .amountToCollect(amountToCollect)
                 .items(items)
                 .orderTotal(orderTotal)
                 .itemThumbnails(itemThumbnails)

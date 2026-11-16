@@ -40,6 +40,16 @@ public class OrderResponseDto {
     private String scheduledDate;
     private String deliveryTimeSlot;
     private String paymentMethod;
+    /**
+     * "COD" (the customer pays cash to the delivery partner at the door) or "ONLINE" (already paid
+     * through Razorpay). Use this, not {@link #paymentMethod}, to decide what to show or do.
+     */
+    private String paymentMode;
+    /**
+     * What the delivery partner has to collect at the door: the order total for a COD order,
+     * zero for an ONLINE one.
+     */
+    private BigDecimal amountToCollect;
     private int itemCount;
     private List<String> itemThumbnails;
     private String estimatedDeliveryWindow;

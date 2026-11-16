@@ -1,7 +1,9 @@
 package com.veggofresh.customer.repository;
 
 import com.veggofresh.customer.entity.Cart;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -24,6 +26,20 @@ public interface CartRepository extends JpaRepository<Cart, UUID> {
      * checkout-summary breakdown back to a cart, so they have to be stable.
      */
     List<Cart> findByUserIdOrderByCreatedAtAscIdAsc(UUID userId);
+
+    /**
+     * The same carts as {@link #findByUserIdOrderByCreatedAtAscIdAsc}, but locked until the end of the
+     * transaction.
+     *
+     * <p>Used by cash-on-delivery checkout, which creates the orders in the same request. Without the lock,
+     * a double tap on "Place Order" sends two requests that both read the carts before either has cleared
+     * them, and the customer gets every order twice. With it, the second request waits, then finds the
+     * carts already cleared and fails with CART_EMPTY. Online checkout does not need this: its payment
+     * record already stops a duplicate.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT c FROM Cart c WHERE c.userId = :userId ORDER BY c.createdAt ASC, c.id ASC")
+    List<Cart> findByUserIdForUpdate(@Param("userId") UUID userId);
 
     Optional<Cart> findByIdAndUserId(UUID id, UUID userId);
 

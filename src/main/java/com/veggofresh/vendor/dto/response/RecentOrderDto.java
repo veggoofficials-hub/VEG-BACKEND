@@ -23,6 +23,8 @@ public class RecentOrderDto {
     private String timeAgo;
     private Double amount;
     private String status;
+    /** "COD" or "ONLINE". */
+    private String paymentMode;
 
     /**
      * Up to 3 product image URLs, same source (CatalogProduct.imageUrl via

@@ -10,6 +10,7 @@ import com.veggofresh.customer.dto.response.InvoiceDto;
 import com.veggofresh.customer.dto.response.OrderResponseDto;
 import com.veggofresh.customer.dto.response.OrderTrackingResponseDto;
 import com.veggofresh.customer.dto.response.RatingResponseDto;
+import com.veggofresh.customer.entity.PaymentMode;
 import com.veggofresh.customer.service.DeliverySlotService;
 import com.veggofresh.customer.service.OrderService;
  import com.veggofresh.payment.controller.PaymentController;
@@ -77,11 +78,19 @@ public class CustomerOrderController {
     public ResponseEntity<ApiResponse<CheckoutResultDto>> checkout(
             @Valid @RequestBody OrderRequestDto request) {
         CheckoutResultDto result = orderService.checkout(SecurityUtils.getCurrentUserId(), request);
-        // PAYMENT FIRST: nothing is ordered yet. The orders are created when the payment is authorized
-        // (see POST /verify-payment), so this must not say "placed".
-        String message = result.getIssues().isEmpty()
-                ? "Checkout ready — complete the payment to place your order"
-                : "Checkout ready for available items — some carts need your attention";
+        String message;
+        if (PaymentMode.COD.name().equals(result.getPaymentMode())) {
+            // CASH ON DELIVERY: the orders were created by this call, so it is right to say "placed".
+            message = result.getIssues().isEmpty()
+                    ? "Order placed successfully — pay cash on delivery"
+                    : "Order placed for the available items — some carts could not be ordered";
+        } else {
+            // PAYMENT FIRST: nothing is ordered yet. The orders are created when the payment is authorized
+            // (see POST /verify-payment), so this must not say "placed".
+            message = result.getIssues().isEmpty()
+                    ? "Checkout ready — complete the payment to place your order"
+                    : "Checkout ready for available items — some carts need your attention";
+        }
         return ResponseEntity.ok(ApiResponse.success(result, message));
     }
 

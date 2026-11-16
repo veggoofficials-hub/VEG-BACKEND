@@ -29,6 +29,7 @@ import com.veggofresh.customer.entity.DeliverySlot;
 import com.veggofresh.customer.entity.Order;
 import com.veggofresh.customer.entity.OrderItem;
 import com.veggofresh.customer.entity.OrderStatus;
+import com.veggofresh.customer.entity.PaymentMode;
 import com.veggofresh.customer.entity.Rating;
 import com.veggofresh.customer.repository.AddressRepository;
 import com.veggofresh.customer.repository.CartRepository;
@@ -159,11 +160,19 @@ public class OrderServiceImpl implements OrderService, PaymentAuthorizedHandler 
      */
     @Override
     public CheckoutResultDto checkout(UUID userId, OrderRequestDto request) {
+        // How the customer pays decides the rest of this method. Read (and validated) first, so an unsupported
+        // method is rejected before anything is priced.
+        final PaymentMode paymentMode = PaymentMode.fromLabel(request.getPaymentMethodId());
+
         Address address = addressRepository.findByIdAndUserId(request.getAddressId(), userId)
                 .orElseThrow(() -> new BusinessException("ADDRESS_NOT_FOUND", "Invalid address selected",
                         HttpStatus.BAD_REQUEST));
 
-        List<Cart> openCarts = shoppableCarts(userId, newVendorSession(address));
+        // COD creates the orders in this same request, so the carts are locked while we work: a double tap on
+        // "Place Order" must not order everything twice. Online checkout creates nothing here, so it reads as before.
+        List<Cart> openCarts = paymentMode == PaymentMode.COD
+                ? shoppableCartsForUpdate(userId, newVendorSession(address))
+                : shoppableCarts(userId, newVendorSession(address));
         if (openCarts.isEmpty()) {
             throw new BusinessException("CART_EMPTY", "You have no items in any cart", HttpStatus.BAD_REQUEST);
         }
@@ -275,6 +284,12 @@ public class OrderServiceImpl implements OrderService, PaymentAuthorizedHandler 
                     .build());
         }
 
+        // CASH ON DELIVERY: there is no payment to wait for, so the orders are created now. Everything above
+        // (cart checks, pricing, coupon quote) is shared with the online flow; the online code below is untouched.
+        if (paymentMode == PaymentMode.COD) {
+            return placeCodOrders(userId, request, toPlace, bases, quote, issues);
+        }
+
         // The coupon that was valued is the coupon that gets taken: pin it, so a change to the customer's held
         // coupon while they are paying cannot silently change the price.
         String pinnedCoupon = quote.status() == CouponQuote.Status.APPLIED ? quote.code() : request.getCouponCode();
@@ -297,6 +312,69 @@ public class OrderServiceImpl implements OrderService, PaymentAuthorizedHandler 
                 .orders(new ArrayList<>())
                 .issues(issues)
                 .paymentHold(paymentHold)
+                .paymentMode(PaymentMode.ONLINE.name())
+                .promoMessage(quote.message())
+                .build();
+    }
+
+    /**
+     * CASH ON DELIVERY. Creates the orders for a checkout that is paid at the door, in the same request.
+     *
+     * <p>What it shares with the online flow ({@link #placeOrders}): the same priced orders, the same coupon
+     * rules, the same cart clearing and the same notifications. What it leaves out: Razorpay. No payment hold
+     * and no payment line is created, so {@code PaymentService.onOrderAccepted / onOrderVoided /
+     * onOrderCancelled} find nothing to do (they skip an order without a payment line) and the coupon is still
+     * given back on any cancellation. Settlement at delivery works as for any order.
+     *
+     * <p>The coupon is taken here, when the order is created, because there is no payment step to wait for.
+     * It is given back if the order is cancelled, rejected or times out, exactly as for online orders.
+     *
+     * <p>Carts that could not be ordered ({@code issues}) are reported, not blocking: the carts that can be
+     * ordered are ordered, and the skipped ones stay in the customer's cart.
+     */
+    private CheckoutResultDto placeCodOrders(UUID userId, OrderRequestDto request, List<Order> toPlace,
+            List<CouponMath.Basis> bases, CouponQuote quote, List<CheckoutIssueDto> issues) {
+        // Take the coupon that was just valued. The same coupon is used for the quote and the reservation.
+        String pinnedCoupon = quote.status() == CouponQuote.Status.APPLIED ? quote.code() : request.getCouponCode();
+        CouponReservation coupon = couponService.reserve(userId, pinnedCoupon, bases);
+        for (Order order : toPlace) {
+            if (coupon.shareOf(order.getSourceCartId()).compareTo(quote.shareOf(order.getSourceCartId())) != 0) {
+                // Valued one way a moment ago, taken another way now. Nothing is saved yet, so the whole request
+                // rolls back and the customer simply tries again.
+                throw new BusinessException("COUPON_CHANGED",
+                        "Your coupon changed while the order was being placed — please try again", HttpStatus.CONFLICT);
+            }
+        }
+
+        Map<UUID, BigDecimal> shareByOrderId = new LinkedHashMap<>();
+        List<Order> placed = new ArrayList<>();
+        for (Order order : toPlace) {
+            order.setPaymentMode(PaymentMode.COD);
+            Order saved = orderRepository.save(order);
+            placed.add(saved);
+            BigDecimal share = coupon.shareOf(saved.getSourceCartId());
+            if (share.signum() > 0) {
+                shareByOrderId.put(saved.getId(), share);
+            }
+            cartService.clearCart(userId, saved.getSourceCartId());
+        }
+        if (coupon.hasDiscount()) {
+            couponService.linkOrders(coupon.redemptionId(), shareByOrderId);
+        }
+
+        // The vendor-accept clock starts now, as the orders exist now.
+        placed.forEach(order -> notifyOrderPlaced(userId, order));
+
+        log.info("COD checkout: {} order(s) placed for user {}, total={}, {} cart(s) skipped",
+                placed.size(), userId,
+                placed.stream().map(Order::getTotalAmount).reduce(BigDecimal.ZERO, BigDecimal::add),
+                issues.size());
+
+        return CheckoutResultDto.builder()
+                .orders(placed.stream().map(orderResponseMapper::mapToDto).collect(Collectors.toList()))
+                .issues(issues)
+                .paymentHold(null)
+                .paymentMode(PaymentMode.COD.name())
                 .promoMessage(quote.message())
                 .build();
     }
@@ -342,7 +420,8 @@ public class OrderServiceImpl implements OrderService, PaymentAuthorizedHandler 
         request.setAddressId(snapshot.addressId());
         request.setDeliverySlotId(snapshot.deliverySlotId());
         request.setScheduledDate(snapshot.scheduledDate());
-        request.setPaymentMethodId(snapshot.paymentMethodId());
+        // An online payment can only ever produce an online order, whatever label the snapshot carries.
+        request.setPaymentMethodId(PaymentMode.onlineLabel(snapshot.paymentMethodId()));
         request.setCouponCode(snapshot.couponCode());
 
         Map<UUID, Cart> openCartsById = new LinkedHashMap<>();
@@ -491,6 +570,11 @@ public class OrderServiceImpl implements OrderService, PaymentAuthorizedHandler 
         return vendors.visibleCarts(cartRepository.findByUserIdOrderByCreatedAtAscIdAsc(userId));
     }
 
+    /** Same as {@link #shoppableCarts} but the cart rows stay locked until the transaction ends (COD checkout). */
+    private List<Cart> shoppableCartsForUpdate(UUID userId, CartVendorResolver.Session vendors) {
+        return vendors.visibleCarts(cartRepository.findByUserIdForUpdate(userId));
+    }
+
     private CartVendorResolver.Session newVendorSession(Address address) {
         return cartVendorResolver.newSession(address.getLatitude(), address.getLongitude());
     }
@@ -565,9 +649,9 @@ public class OrderServiceImpl implements OrderService, PaymentAuthorizedHandler 
                     request.getScheduledDate() != null ? LocalDate.parse(request.getScheduledDate()) : slot.getDate());
         }
 
-        if (request.getPaymentMethodId() != null) {
-            order.setPaymentMethodId(request.getPaymentMethodId().toString());
-        }
+        // The mode is what the code branches on; the label is only for display ("COD", "UPI", "CARD", "ONLINE").
+        order.setPaymentMode(PaymentMode.fromLabel(request.getPaymentMethodId()));
+        order.setPaymentMethodId(PaymentMode.displayLabel(request.getPaymentMethodId()));
 
         // No coupon yet: it is valued once for the whole checkout (see checkout()) and each order's share is
         // put on by applyPromo() before the order is saved.
@@ -778,6 +862,8 @@ public class OrderServiceImpl implements OrderService, PaymentAuthorizedHandler 
                 .deliveredAt(order.getDeliveredAt())
                 .hasBeenRated(rated)
                 .dropOtp(order.getDropOtp())
+                .paymentMode(modeName(order))
+                .amountToCollect(amountToCollect(order))
                 .build();
     }
 
@@ -978,7 +1064,9 @@ public class OrderServiceImpl implements OrderService, PaymentAuthorizedHandler 
         notificationService.send(saved.getUserId(), NotificationRecipientRole.CUSTOMER,
                 NotificationType.ORDER_CANCELLED,
                 "Your order was cancelled",
-                "Order " + saved.getOrderNumber() + " was cancelled — your refund is on the way",
+                "Order " + saved.getOrderNumber() + (saved.getPaymentMode() == PaymentMode.COD
+                        ? " was cancelled"
+                        : " was cancelled — your refund is on the way"),
                 orderData(saved));
 
         // The refund belongs to the payment module and nowhere else.
@@ -1103,6 +1191,7 @@ public class OrderServiceImpl implements OrderService, PaymentAuthorizedHandler 
                 .promoCode(order.getPromoCode())
                 .total(order.getTotalAmount())
                 .paymentMethod(displayPaymentMethod(order))
+                .paymentMode(modeName(order))
                 .build();
     }
 
@@ -1122,10 +1211,23 @@ public class OrderServiceImpl implements OrderService, PaymentAuthorizedHandler 
     private String displayPaymentMethod(Order order) {
         String stored = order.getPaymentMethodId();
         if (stored == null || stored.isBlank()) {
-            return "COD";
+            // Nothing stored: say what the order really is. This used to say "COD" for every such order,
+            // which was wrong for an order paid online without a label.
+            return modeName(order);
         }
-        String trimmed = stored.trim();
-        return trimmed.isEmpty() ? "COD" : trimmed.toUpperCase(Locale.ROOT);
+        return stored.trim().toUpperCase(Locale.ROOT);
+    }
+
+    /** "COD" or "ONLINE". An order with no mode (not expected: the column is not null) counts as online. */
+    private static String modeName(Order order) {
+        return order.getPaymentMode() != null ? order.getPaymentMode().name() : PaymentMode.ONLINE.name();
+    }
+
+    /** What the delivery partner collects at the door: the total for COD, zero otherwise. */
+    private static BigDecimal amountToCollect(Order order) {
+        return order.getPaymentMode() == PaymentMode.COD && order.getTotalAmount() != null
+                ? order.getTotalAmount()
+                : BigDecimal.ZERO;
     }
 
     @Override

@@ -33,7 +33,12 @@ public class OrderRequestDto {
      */
     private List<UUID> cartIds;
 
-    /** Payment method label — e.g. "COD", "UPI", "ONLINE", "WALLET" */
+    /**
+     * How the customer is paying. Accepted values (case-insensitive):
+     * "COD" = cash on delivery, orders are created immediately and no Razorpay payment is made;
+     * "UPI", "CARD" or "ONLINE" = pay through Razorpay first. Missing or blank means online.
+     * Any other value (for example "WALLET") is rejected with PAYMENT_METHOD_NOT_SUPPORTED.
+     */
     private String paymentMethodId;
 
     /** Optional — delivery slot selected at checkout */

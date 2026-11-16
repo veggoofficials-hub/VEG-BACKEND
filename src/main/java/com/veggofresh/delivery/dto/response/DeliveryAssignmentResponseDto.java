@@ -67,6 +67,18 @@ public class DeliveryAssignmentResponseDto {
      */
     private BigDecimal estimatedEarning;
 
+    /**
+     * "COD" or "ONLINE". Populated on both the pre-accept and post-accept views, so a partner knows before
+     * accepting whether they will be handed cash at the door. Null only if the order could not be read.
+     */
+    private String paymentMode;
+
+    /**
+     * The cash the partner has to collect from the customer at the door: the order total for a COD order,
+     * zero for an ONLINE one. Same availability as {@link #paymentMode}.
+     */
+    private BigDecimal amountToCollect;
+
     /** Order contents -- only populated once this partner has accepted (see mapToFullDto). */
     private List<OrderItemSummaryDto> items;
     private BigDecimal orderTotal;

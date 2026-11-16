@@ -6,6 +6,7 @@ import com.veggofresh.customer.entity.CustomerProfile;
 import com.veggofresh.customer.entity.Order;
 import com.veggofresh.customer.entity.OrderItem;
 import com.veggofresh.customer.entity.OrderStatus;
+import com.veggofresh.customer.entity.PaymentMode;
 import com.veggofresh.customer.repository.CustomerProfileRepository;
 import com.veggofresh.admin.dto.response.ProductResponseDto;
 import com.veggofresh.admin.service.AdminProductService;
@@ -116,6 +117,8 @@ public class OrderResponseMapper {
                 .scheduledDate(order.getScheduledDate() != null ? order.getScheduledDate().toString() : null)
                 .deliveryTimeSlot(order.getDeliveryTimeSlot())
                 .paymentMethod(displayPaymentMethod(order))
+                .paymentMode(modeName(order))
+                .amountToCollect(amountToCollect(order))
                 // Sum of QUANTITIES, not the number of line items. The cart
                 // screen, the checkout summary and the cart badge all report
                 // quantities, so an order showing 1 for "2kg apples + 1kg rice"
@@ -176,9 +179,22 @@ public class OrderResponseMapper {
     private String displayPaymentMethod(Order order) {
         String stored = order.getPaymentMethodId();
         if (stored == null || stored.isBlank()) {
-            return "COD";
+            // Nothing stored: say what the order really is (it used to say "COD" for every such order).
+            return modeName(order);
         }
         return stored.trim().toUpperCase(java.util.Locale.ROOT);
+    }
+
+    /** "COD" or "ONLINE". An order with no mode (not expected: the column is not null) counts as online. */
+    private static String modeName(Order order) {
+        return order.getPaymentMode() != null ? order.getPaymentMode().name() : PaymentMode.ONLINE.name();
+    }
+
+    /** What the delivery partner collects at the door: the total for COD, zero otherwise. */
+    private static java.math.BigDecimal amountToCollect(Order order) {
+        return order.getPaymentMode() == PaymentMode.COD && order.getTotalAmount() != null
+                ? order.getTotalAmount()
+                : java.math.BigDecimal.ZERO;
     }
 
     private ProductResponseDto safeGetProduct(java.util.UUID productId) {

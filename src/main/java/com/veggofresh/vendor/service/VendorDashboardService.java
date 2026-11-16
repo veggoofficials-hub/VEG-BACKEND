@@ -141,6 +141,7 @@ public class VendorDashboardService {
                 .amount(shopAmount.doubleValue())
                 .status(order.getStatus().toLowerCase())
                 .itemThumbnails(order.getItemThumbnails())
+                .paymentMode(order.getPaymentMode())
                 .build();
     }
 

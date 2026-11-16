@@ -146,6 +146,7 @@ public class VendorOrderManagementService {
                 .longitude(order.getLongitude())
                 .subtotal(subtotal)
                 .estimatedPayout(estimatedPayout(subtotal))
+                .paymentMode(order.getPaymentMode())
                 .createdAt(order.getCreatedAt())
                 .updatedAt(order.getUpdatedAt());
 

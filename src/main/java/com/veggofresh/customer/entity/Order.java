@@ -69,6 +69,15 @@ public class Order extends BaseEntity {
     @Column(name = "payment_method_id", length = 36)
     private String paymentMethodId;
 
+    /**
+     * How this order is paid: COD (cash to the delivery partner at the door) or ONLINE (Razorpay,
+     * paid before the order existed). The code branches on this; {@link #paymentMethodId} is only the
+     * display label the app sent.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "payment_mode", nullable = false, length = 10)
+    private PaymentMode paymentMode = PaymentMode.ONLINE;
+
     // ── Scheduled Delivery ───────────────────────────────────
     @Column(name = "scheduled_date")
     private LocalDate scheduledDate;

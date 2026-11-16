@@ -46,6 +46,8 @@ public class VendorOrderDetailResponseDto {
      * anyone else's identity.
      */
     private BigDecimal estimatedPayout;
+    /** "COD" (the customer pays cash to the delivery partner) or "ONLINE" (already paid). */
+    private String paymentMode;
 
     /**
      * Delivery partner identity -- null until dispatch has happened AND a

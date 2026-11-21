@@ -44,4 +44,10 @@ public class CheckoutSummaryDto {
     private String promoStatus;
     /** A readable line for the customer, e.g. "Add Rs 100 more to get this discount". Null when nothing to say. */
     private String promoMessage;
+
+    /**
+     * true only when EVERY selected cart can be ordered to this address. When false, {@code issues} says which
+     * lines to remove (or that the carts must be re-arranged) and the Place Order / pay button must stay disabled.
+     */
+    private boolean canCheckout;
 }

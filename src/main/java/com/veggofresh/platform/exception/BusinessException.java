@@ -52,6 +52,7 @@ public class BusinessException extends RuntimeException {
         super(message);
         this.errorCode = errorCode;
         this.status = status;
+        this.details = null;
     }
 
     /**
@@ -62,5 +63,18 @@ public class BusinessException extends RuntimeException {
      */
     public BusinessException(String errorCode, String message) {
         this(errorCode, message, HttpStatus.BAD_REQUEST);
+    }
+
+    /**
+     * Optional structured payload returned to the client in the error response's {@code data} field
+     * (null for ordinary business errors).
+     */
+    private final Object details;
+
+    public BusinessException(String errorCode, String message, HttpStatus status, Object details) {
+        super(message);
+        this.errorCode = errorCode;
+        this.status = status;
+        this.details = details;
     }
 }

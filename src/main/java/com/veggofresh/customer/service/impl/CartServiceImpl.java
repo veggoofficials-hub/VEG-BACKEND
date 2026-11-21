@@ -2,6 +2,7 @@ package com.veggofresh.customer.service.impl;
 
 import com.veggofresh.admin.service.AdminProductService;
 import com.veggofresh.admin.service.PlatformSettingsService;
+import com.veggofresh.admin.dto.response.ProductResponseDto;
 import com.veggofresh.coupon.dto.CouponPreview;
 import com.veggofresh.coupon.dto.CouponQuote;
 import com.veggofresh.coupon.service.CouponCheckoutService;
@@ -10,14 +11,14 @@ import com.veggofresh.customer.dto.request.CartItemRequestDto;
 import com.veggofresh.customer.dto.response.CartItemResponseDto;
 import com.veggofresh.customer.dto.response.CartPromoPreviewDto;
 import com.veggofresh.customer.dto.response.CartResponseDto;
-import com.veggofresh.customer.entity.Address;
 import com.veggofresh.customer.entity.Cart;
 import com.veggofresh.customer.entity.CartItem;
-import com.veggofresh.customer.repository.AddressRepository;
 import com.veggofresh.customer.repository.CartItemRepository;
 import com.veggofresh.customer.repository.CartRepository;
+import com.veggofresh.customer.service.CartArranger;
 import com.veggofresh.customer.service.CartService;
 import com.veggofresh.customer.service.CartVendorResolver;
+import com.veggofresh.platform.common.GeoPoint;
 import com.veggofresh.platform.exception.BusinessException;
 import com.veggofresh.vendor.dto.ProductDto;
 import com.veggofresh.vendor.service.ProductCatalogService;
@@ -42,14 +43,12 @@ import java.util.stream.Collectors;
 /**
  * PHASE 2 — NEW ARCHITECTURE, multi-cart model (PROJECT_STATE section 2).
  *
- * VENDOR CATALOG PIVOT PATCH: ProductCatalogService methods now require a
- * latitude/longitude (radius eligibility depends on where the customer is).
- * Since add-to-cart/browsing happens before any checkout address is chosen,
- * this class resolves location from the customer's DEFAULT saved Address
- * (falling back to their first address if none is marked default) via
- * resolveLocation() below. If the customer has no address at all yet, cart
- * operations now require adding one first (ADDRESS_REQUIRED) -- a real
- * behavior change, flagged in NOTES_CUSTOMER.md, not silently introduced.
+ * LOCATION: radius eligibility depends on where the customer is. Every method here receives the
+ * {@link GeoPoint} the customer is browsing from (the app sends the selected address's coordinates) and judges
+ * availability, vendor sets and cart grouping at that point. There is no default-address lookup any more: what
+ * the customer sees when browsing is exactly what the cart judges. Lines that cannot be bought at that point are
+ * returned with {@code available=false} (shown greyed out, never silently hidden) and are excluded from totals.
+ * The delivery address is only used at checkout, which is the final authority.
  *
  * <h2>Invariants this class guarantees</h2>
  *
@@ -81,31 +80,37 @@ public class CartServiceImpl implements CartService {
 
     private final CartRepository cartRepository;
     private final CartItemRepository cartItemRepository;
-    private final AddressRepository addressRepository;
     private final ProductCatalogService productCatalogService;
     private final CouponCheckoutService couponService;
     private final AdminProductService adminProductService;
     private final PlatformSettingsService platformSettingsService;
     private final CartVendorResolver cartVendorResolver;
+    private final CartArranger cartArranger;
 
     @Override
     @Transactional(readOnly = true)
-    public List<CartResponseDto> getOpenCarts(UUID userId) {
-        return toResponses(userId);
+    public List<CartResponseDto> getOpenCarts(UUID userId, GeoPoint location) {
+        return toResponses(userId, newSession(location));
     }
 
     @Override
-    public List<CartResponseDto> addItemToCart(UUID userId, CartItemRequestDto request) {
+    public List<CartResponseDto> arrangeCarts(UUID userId, GeoPoint location) {
+        CartVendorResolver.Session vendors = newSession(location);
+        cartArranger.arrange(userId, vendors);
+        return toResponses(userId, vendors);
+    }
+
+    @Override
+    public List<CartResponseDto> addItemToCart(UUID userId, CartItemRequestDto request, GeoPoint location) {
         int quantity = requirePositiveQuantity(request.getQuantity(), "Quantity must be at least 1");
 
-        double[] location = resolveLocation(userId);
-        CartVendorResolver.Session vendors = cartVendorResolver.newSession(location[0], location[1]);
+        CartVendorResolver.Session vendors = newSession(location);
 
         // getProductById is the correct call here: adding something the customer
         // cannot buy is a genuine error, so it should surface loudly rather than
         // be skipped. It is safe because the exception is NOT caught (see the
         // rollback-only note on safeGetProduct).
-        productCatalogService.getProductById(request.getProductId(), location[0], location[1]);
+        productCatalogService.getProductById(request.getProductId(), location.latitude(), location.longitude());
 
         Set<UUID> productVendorIds = vendors.vendorsFor(request.getProductId());
         if (productVendorIds.isEmpty()) {
@@ -160,7 +165,7 @@ public class CartServiceImpl implements CartService {
     }
 
     @Override
-    public List<CartResponseDto> updateCartItem(UUID userId, UUID cartItemId, int quantity) {
+    public List<CartResponseDto> updateCartItem(UUID userId, UUID cartItemId, int quantity, GeoPoint location) {
         // Quantity 0 (or below) means "remove this line". Preserved from
         // 51cf525: a client decrementing a line to zero expects the line to go
         // away, and a stored zero-quantity row would otherwise sit in the cart
@@ -168,7 +173,7 @@ public class CartServiceImpl implements CartService {
         // to removeCartItem also means the emptied-cart retirement and the
         // vendor re-sync below happen through one path, not two.
         if (quantity <= 0) {
-            return removeCartItem(userId, cartItemId);
+            return removeCartItem(userId, cartItemId, location);
         }
 
         CartItem item = cartItemRepository.findByIdAndCart_UserId(cartItemId, userId)
@@ -179,7 +184,7 @@ public class CartServiceImpl implements CartService {
         cartItemRepository.save(item);
 
         Cart cart = item.getCart();
-        CartVendorResolver.Session vendors = newSessionFor(cart.getUserId());
+        CartVendorResolver.Session vendors = newSession(location);
         vendors.resync(cart);
         cartRepository.save(cart);
 
@@ -187,7 +192,7 @@ public class CartServiceImpl implements CartService {
     }
 
     @Override
-    public List<CartResponseDto> removeCartItem(UUID userId, UUID cartItemId) {
+    public List<CartResponseDto> removeCartItem(UUID userId, UUID cartItemId, GeoPoint location) {
         CartItem item = cartItemRepository.findByIdAndCart_UserId(cartItemId, userId)
                 .orElseThrow(() -> new BusinessException("CART_ITEM_NOT_FOUND", "Item not found in your cart",
                         HttpStatus.NOT_FOUND));
@@ -206,7 +211,7 @@ public class CartServiceImpl implements CartService {
         //
         // retireIfEmptied() below still closes the cart when the last line goes,
         // so a ghost is never left open.
-        CartVendorResolver.Session vendors = newSessionFor(cart.getUserId());
+        CartVendorResolver.Session vendors = newSession(location);
         vendors.resync(cart);
         cartRepository.save(cart);
 
@@ -239,8 +244,7 @@ public class CartServiceImpl implements CartService {
 
     @Override
     @Transactional(readOnly = true)
-    public List<ProductDto> getCartRecommendations(UUID userId) {
-        double[] location = resolveLocation(userId);
+    public List<ProductDto> getCartRecommendations(UUID userId, GeoPoint location) {
         List<Cart> carts = cartRepository.findByUserIdOrderByCreatedAtAscIdAsc(userId);
         List<CartItem> allItems = carts.stream()
                 .filter(Cart::hasItems)
@@ -248,7 +252,7 @@ public class CartServiceImpl implements CartService {
                 .collect(Collectors.toList());
 
         if (allItems.isEmpty()) {
-            return productCatalogService.getDailyDeals(location[0], location[1]);
+            return productCatalogService.getDailyDeals(location.latitude(), location.longitude());
         }
 
         // Deduplicate by product: a customer with the same item in two carts
@@ -263,8 +267,8 @@ public class CartServiceImpl implements CartService {
             // is genuinely gone, which is a real error worth surfacing --
             // swallowing it would mark this transaction rollback-only and
             // resurface as UnexpectedRollbackException at commit.
-            List<ProductDto> related = productCatalogService.getRelatedProducts(item.getProductId(), location[0],
-                    location[1]);
+            List<ProductDto> related = productCatalogService.getRelatedProducts(item.getProductId(),
+                    location.latitude(), location.longitude());
             if (related == null) {
                 continue;
             }
@@ -281,7 +285,7 @@ public class CartServiceImpl implements CartService {
     }
 
     @Override
-    public List<CartResponseDto> applyPromoCode(UUID userId, UUID cartId, String code) {
+    public List<CartResponseDto> applyPromoCode(UUID userId, UUID cartId, String code, GeoPoint location) {
         Cart cart = requireOwnedCart(cartId, userId);
         if (!cart.hasItems()) {
             throw new BusinessException("CART_EMPTY", "This cart has no items to discount", HttpStatus.BAD_REQUEST);
@@ -293,14 +297,14 @@ public class CartServiceImpl implements CartService {
         // work for this customer (unknown, off, expired, limit reached, not for them).
         couponService.select(userId, code);
 
-        return toResponses(userId);
+        return toResponses(userId, newSession(location));
     }
 
     @Override
-    public List<CartResponseDto> removePromoCode(UUID userId, UUID cartId) {
+    public List<CartResponseDto> removePromoCode(UUID userId, UUID cartId, GeoPoint location) {
         requireOwnedCart(cartId, userId);
         couponService.clearSelection(userId);
-        return toResponses(userId);
+        return toResponses(userId, newSession(location));
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -320,8 +324,8 @@ public class CartServiceImpl implements CartService {
      * lined a checkout breakdown up against the wrong cart. One list, one
      * counter, one order — see CartService#cartLabel.
      */
-    private List<CartResponseDto> toResponses(UUID userId) {
-        return toResponses(userId, newSessionFor(userId));
+    private List<CartResponseDto> toResponses(UUID userId, GeoPoint location) {
+        return toResponses(userId, newSession(location));
     }
 
     /**
@@ -341,11 +345,13 @@ public class CartServiceImpl implements CartService {
         BigDecimal deliveryFee = platformSettingsService.getDeliveryFeeAmount();
         BigDecimal estimatedTax = platformSettingsService.getPlatformFeeAmount();
         Map<UUID, ProductDto> products = resolveProducts(carts, vendors);
+        Map<UUID, ProductResponseDto> unavailableInfo = resolveUnavailableInfo(carts, products);
         CouponPreview preview = previewCoupon(userId, carts, products);
 
         List<CartResponseDto> responses = new ArrayList<>(carts.size());
         for (Cart cart : carts) {
-            responses.add(mapToDto(cart, cartLabel(responses.size()), products, deliveryFee, estimatedTax, preview));
+            responses.add(mapToDto(cart, cartLabel(responses.size()), products, unavailableInfo, vendors,
+                    deliveryFee, estimatedTax, preview));
         }
         return responses;
     }
@@ -361,6 +367,7 @@ public class CartServiceImpl implements CartService {
     }
 
     private CartResponseDto mapToDto(Cart cart, String label, Map<UUID, ProductDto> products,
+            Map<UUID, ProductResponseDto> unavailableInfo, CartVendorResolver.Session vendors,
             BigDecimal deliveryFee, BigDecimal estimatedTax, CouponPreview preview) {
         BigDecimal total = BigDecimal.ZERO;
         int itemCount = 0;
@@ -370,10 +377,11 @@ public class CartServiceImpl implements CartService {
         for (CartItem item : cart.getItems()) {
             ProductDto product = products.get(item.getProductId());
             if (product == null || product.getPrice() == null) {
-                // Not buyable right now. Left in the cart (the customer decides
-                // to remove it) but excluded from BOTH the money and the count,
-                // so itemCount always describes exactly what is being charged.
+                // Not buyable here. Left in the cart (the customer decides to remove it) and now SHOWN, flagged
+                // available=false so the app greys it out; still excluded from BOTH the money and the count, so
+                // itemCount always describes exactly what is being charged.
                 unavailableItemCount++;
+                itemsList.add(unavailableLine(item, unavailableInfo.get(item.getProductId())));
                 continue;
             }
             BigDecimal subTotal = product.getPrice().multiply(BigDecimal.valueOf(item.getQuantity()));
@@ -411,6 +419,8 @@ public class CartServiceImpl implements CartService {
                 .estimatedTax(estimatedTax)
                 .payableAmount(payable)
                 .unavailableItemCount(unavailableItemCount)
+                .hasUnavailableItems(unavailableItemCount > 0)
+                .needsArrangement(!vendors.canShipTogether(cart))
                 .promoCode(preview.code())
                 .promoDiscount(promoDiscount)
                 .promoMessage(preview.messageOf(cart.getId()))
@@ -465,9 +475,45 @@ public class CartServiceImpl implements CartService {
         return quantity;
     }
 
-    private CartVendorResolver.Session newSessionFor(UUID userId) {
-        double[] location = resolveLocation(userId);
-        return cartVendorResolver.newSession(location[0], location[1]);
+    private CartVendorResolver.Session newSession(GeoPoint location) {
+        return cartVendorResolver.newSession(location.latitude(), location.longitude());
+    }
+
+    /**
+     * For the lines that cannot be bought at the location: what the customer needs to see to recognise them
+     * (name, picture, unit, catalog price), straight from the admin catalog. One lookup per distinct product,
+     * and none at all in the usual case where everything in the cart is available.
+     */
+    private Map<UUID, ProductResponseDto> resolveUnavailableInfo(List<Cart> carts, Map<UUID, ProductDto> products) {
+        Map<UUID, ProductResponseDto> info = new HashMap<>();
+        for (Cart cart : carts) {
+            for (CartItem item : cart.getItems()) {
+                UUID productId = item.getProductId();
+                if (products.containsKey(productId) || info.containsKey(productId)) {
+                    continue;
+                }
+                // Optional lookup, never an exception (see safeGetProduct for why).
+                adminProductService.findProductById(productId).ifPresent(p -> info.put(productId, p));
+            }
+        }
+        return info;
+    }
+
+    /** A greyed-out cart line: shown so the customer can remove it, never part of the totals. */
+    private CartItemResponseDto unavailableLine(CartItem item, ProductResponseDto info) {
+        boolean stillInCatalog = info != null && info.isActive();
+        return CartItemResponseDto.builder()
+                .id(item.getId())
+                .productId(item.getProductId())
+                .productName(info != null && info.getName() != null ? info.getName() : "Product no longer available")
+                .unitPrice(info != null ? info.getPrice() : null)
+                .unit(info != null ? info.getUnit() : null)
+                .quantity(item.getQuantity())
+                .subTotal(BigDecimal.ZERO)
+                .productImageUrl(info != null ? info.getImageUrl() : null)
+                .available(false)
+                .unavailableReason(stillInCatalog ? "NOT_AVAILABLE_AT_LOCATION" : "PRODUCT_UNAVAILABLE")
+                .build();
     }
 
     /** One eligible-product lookup per distinct product across the given carts. */
@@ -537,8 +583,8 @@ public class CartServiceImpl implements CartService {
 
     @Override
     @Transactional(readOnly = true)
-    public CartPromoPreviewDto previewPromo(UUID userId, List<UUID> cartIds, String couponCode) {
-        CartVendorResolver.Session vendors = newSessionFor(userId);
+    public CartPromoPreviewDto previewPromo(UUID userId, List<UUID> cartIds, String couponCode, GeoPoint location) {
+        CartVendorResolver.Session vendors = newSession(location);
         List<Cart> carts = vendors.visibleCarts(cartRepository.findByUserIdOrderByCreatedAtAscIdAsc(userId));
 
         // Same selection rule as the checkout summary: no ids = every open cart, ids = only those.
@@ -581,28 +627,6 @@ public class CartServiceImpl implements CartService {
                 .message(quote.message())
                 .perCart(perCart)
                 .build();
-    }
-
-    /**
-     * VENDOR CATALOG PIVOT PATCH: resolves a reference location for radius
-     * eligibility checks -- the customer's default saved Address, falling
-     * back to their first address if none is marked default. Throws if they
-     * have no address at all yet, since eligibility genuinely can't be
-     * computed without one. This is a minimal compile-fix decision, not a
-     * final design call -- see NOTES_CUSTOMER.md.
-     */
-    private double[] resolveLocation(UUID userId) {
-        List<Address> addresses = addressRepository.findByUserId(userId);
-        Address reference = addresses.stream()
-                .filter(Address::isDefault)
-                .findFirst()
-                .orElse(addresses.isEmpty() ? null : addresses.get(0));
-
-        if (reference == null) {
-            throw new BusinessException("ADDRESS_REQUIRED",
-                    "Add a delivery address before browsing or adding items to your cart", HttpStatus.BAD_REQUEST);
-        }
-        return new double[] { reference.getLatitude(), reference.getLongitude() };
     }
 
     /**

@@ -21,4 +21,13 @@ public class CheckoutIssueDto {
     private UUID cartId;
     private String cartLabel;
     private String reason;
+
+    /**
+     * ITEMS_UNAVAILABLE (some lines cannot be delivered to this address: see {@code items}) or
+     * NEEDS_ARRANGEMENT (every line can be delivered, but not all from one shop: call POST /carts/arrange).
+     */
+    private String issueType;
+
+    /** The lines that cannot be delivered to this address; empty for NEEDS_ARRANGEMENT. */
+    private java.util.List<UnavailableItemDto> items;
 }

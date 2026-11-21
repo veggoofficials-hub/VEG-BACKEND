@@ -16,6 +16,7 @@ import com.veggofresh.chatbot.service.ChatbotService;
 import com.veggofresh.chatbot.service.IntentMatcher;
 import com.veggofresh.chatbot.service.ReplyBuilder;
 import com.veggofresh.customer.dto.response.AddressResponseDto;
+import com.veggofresh.platform.common.GeoPoint;
 import com.veggofresh.customer.dto.response.CartResponseDto;
 import com.veggofresh.customer.dto.response.CustomerProfileSummaryDto;
 import com.veggofresh.customer.dto.response.OrderResponseDto;
@@ -257,8 +258,14 @@ public class ChatbotServiceImpl implements ChatbotService {
     }
 
     private ChatResponseDto cart(UUID userId, String conv, ChatRequestDto req) {
-        List<CartResponseDto> carts = cartService.getOpenCarts(userId);
         FollowUp f = followUp(userId, req);
+        // The cart is shown for the location the customer is at, so it needs the coordinates in the request.
+        Optional<double[]> loc = location(userId, req);
+        if (loc.isEmpty()) {
+            return respond(conv, replies.needAddress(), f.options(), null, f.context(), false);
+        }
+        List<CartResponseDto> carts = cartService.getOpenCarts(userId,
+                GeoPoint.of(loc.get()[0], loc.get()[1]));
         return respond(conv, replies.cart(carts), f.options(), null, f.context(), false);
     }
 
@@ -387,20 +394,16 @@ public class ChatbotServiceImpl implements ChatbotService {
         }).findFirst();
     }
 
-    /** Request coordinates if given, otherwise the customer's default saved address. */
+    /**
+     * The coordinates sent with the chat message (the location the customer is browsing from). There is no
+     * default-address fallback any more: without coordinates the bot asks for a location.
+     */
     private Optional<double[]> location(UUID userId, ChatRequestDto req) {
-        if (req.getLatitude() != null && req.getLongitude() != null) {
+        if (req.getLatitude() != null && req.getLongitude() != null
+                && GeoPoint.isValid(req.getLatitude(), req.getLongitude())) {
             return Optional.of(new double[]{req.getLatitude(), req.getLongitude()});
         }
-        List<AddressResponseDto> addresses = addressService.getAddresses(userId);
-        if (addresses == null || addresses.isEmpty()) {
-            return Optional.empty();
-        }
-        AddressResponseDto chosen = addresses.stream()
-                .filter(AddressResponseDto::isDefault)
-                .findFirst()
-                .orElse(addresses.get(0));
-        return Optional.of(new double[]{chosen.getLatitude(), chosen.getLongitude()});
+        return Optional.empty();
     }
 
     /** Customer's first name for the greeting, or null (we never greet someone by their phone number). */

@@ -1,6 +1,7 @@
 package com.veggofresh.payment.repository;
 
 import com.veggofresh.payment.entity.PaymentOrder;
+import com.veggofresh.payment.entity.PaymentOrderStatus;
 import jakarta.persistence.LockModeType;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -10,6 +11,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -17,6 +19,12 @@ import java.util.UUID;
 public interface PaymentOrderRepository extends JpaRepository<PaymentOrder, UUID> {
 
     Optional<PaymentOrder> findByRazorpayOrderId(String razorpayOrderId);
+
+    /**
+     * Does this customer have a payment of this status that was started after {@code after}? Used to tell that an
+     * online checkout is still waiting for its payment, in which case the customer's carts must not be re-arranged.
+     */
+    boolean existsByUserIdAndStatusAndCreatedAtAfter(UUID userId, PaymentOrderStatus status, Instant after);
 
     /**
      * PESSIMISTIC_WRITE row lock -- required before mutating status/capturedAmount.

@@ -119,6 +119,7 @@ class CartVendorResolverTest {
         UUID second = UUID.randomUUID();
         when(productCatalogService.getShopIdsForProduct(first, 12.9716, 77.5946)).thenReturn(Set.of(vendor1));
         when(productCatalogService.getShopIdsForProduct(second, 12.9716, 77.5946)).thenReturn(Set.of(vendor1));
+        purchasable(first);
 
         Cart existing = cartWith(first, 2);
         CartVendorResolver.Session session = session();
@@ -159,6 +160,7 @@ class CartVendorResolverTest {
         when(productCatalogService.getShopIdsForProduct(productC, 12.9716, 77.5946))
                 .thenReturn(Set.of(vendor1, vendor2));
 
+        purchasable(productA, productB);
         Cart firstCart = cartWith(productA, 1);
         Cart secondCart = cartWith(productB, 1);
 
@@ -184,6 +186,7 @@ class CartVendorResolverTest {
         when(productCatalogService.getShopIdsForProduct(incoming, 12.9716, 77.5946))
                 .thenReturn(Set.of(vendor1, vendor2));
 
+        purchasable(wideProduct, narrowProduct);
         Cart wideCart = cartWith(wideProduct, 1);
         Cart narrowCart = cartWith(narrowProduct, 1);
 
@@ -204,6 +207,7 @@ class CartVendorResolverTest {
         when(productCatalogService.getShopIdsForProduct(product, 12.9716, 77.5946))
                 .thenReturn(Set.of(vendor1, vendor2));
 
+        purchasable(product);
         Cart cart = cartWith(product, 1);
         // Exactly the corrupted state the old narrowing logic produced.
         cart.setCandidateVendorIds(Set.of(vendor1));
@@ -224,6 +228,7 @@ class CartVendorResolverTest {
         when(productCatalogService.getShopIdsForProduct(removed, 12.9716, 77.5946))
                 .thenReturn(Set.of(vendor1, vendor2));
 
+        purchasable(kept, removed);
         Cart cart = new Cart();
         cart.setUserId(userId);
         for (UUID productId : List.of(kept, removed)) {
@@ -309,14 +314,13 @@ class CartVendorResolverTest {
     }
 
     @Test
-    @DisplayName("visibleCarts drops a cart whose rows all point at products nobody sells any more")
-    void visibleCartsDropsWhollyUnavailableCart() {
+    @DisplayName("visibleCarts KEEPS a cart whose rows all point at products nobody sells here, so the customer sees them greyed out")
+    void visibleCartsKeepsWhollyUnavailableCart() {
         UUID dead = UUID.randomUUID();
         when(productCatalogService.getShopIdsForProduct(dead, 12.9716, 77.5946)).thenReturn(Set.of());
 
-        // The row still exists, which is why a rows-only filter keeps it and the
-        // client then renders an empty cart card.
-        assertTrue(session().visibleCarts(List.of(cartWith(dead, 3))).isEmpty());
+        // Used to be hidden, leaving a silent hole in the cart. Its lines now come back flagged unavailable.
+        assertEquals(1, session().visibleCarts(List.of(cartWith(dead, 3))).size());
     }
 
     @Test
@@ -350,10 +354,10 @@ class CartVendorResolverTest {
         purchasable(first, second);
 
         Cart one = cartWith(first, 1);
-        Cart hidden = cartWith(dead, 1);
+        Cart hidden = emptyCart();
         Cart two = cartWith(second, 1);
 
-        // The middle cart drops out, so the survivor keeps its own position: the
+        // The empty middle cart (a row-level ghost) drops out, so the survivor keeps its own position: the
         // customer saw it as "Cart 3" before and must still see "Cart 3".
         List<Cart> visible = session().visibleCarts(List.of(one, hidden, two));
 
@@ -393,8 +397,10 @@ class CartVendorResolverTest {
 
         assertTrue(session().onlyShippableItems(cart).isEmpty(),
                 "a deactivated product must not be reported as shippable");
-        assertTrue(session().visibleCarts(List.of(cart)).isEmpty(),
-                "a cart holding only a deactivated product must not render as an empty card");
+        // The cart is still shown (so the customer can see and remove the line), but the line is flagged unavailable.
+        assertEquals(1, session().visibleCarts(List.of(cart)).size());
+        assertEquals(1, session().unavailableItems(cart).size(),
+                "the deactivated line must be reported as unavailable");
     }
 
     @Test
@@ -511,5 +517,60 @@ class CartVendorResolverTest {
         assertTrue(session().bestCartFor(List.of(), UUID.randomUUID()).isEmpty());
         assertTrue(session().bestCartFor(null, UUID.randomUUID()).isEmpty());
         verify(productCatalogService, never()).getShopIdsForProduct(any(UUID.class), anyDouble(), anyDouble());
+    }
+
+    // ── availability helpers used by the cart screen, the arranger and checkout ──
+
+    private void addLine(Cart cart, UUID productId, int quantity) {
+        CartItem item = new CartItem();
+        item.setCart(cart);
+        item.setProductId(productId);
+        item.setQuantity(quantity);
+        cart.getItems().add(item);
+    }
+
+    @Test
+    @DisplayName("availableVendorIds ignores a line nobody sells here instead of emptying the whole set")
+    void availableVendorIdsIgnoresUnavailableLines() {
+        UUID alive = UUID.randomUUID();
+        UUID dead = UUID.randomUUID();
+        when(productCatalogService.getShopIdsForProduct(alive, 12.9716, 77.5946)).thenReturn(Set.of(vendor1, vendor2));
+        when(productCatalogService.getShopIdsForProduct(dead, 12.9716, 77.5946)).thenReturn(Set.of());
+        purchasable(alive);
+
+        Cart cart = cartWith(alive, 1);
+        addLine(cart, dead, 2);
+        CartVendorResolver.Session session = session();
+
+        assertEquals(Set.of(vendor1, vendor2), session.availableVendorIds(cart));
+        assertTrue(session.canShipTogether(cart), "the unavailable line must not make the cart look split");
+        assertFalse(session.revalidate(cart), "checkout still refuses a cart that holds an unavailable line");
+        assertEquals(1, session.unavailableItems(cart).size());
+        assertEquals(dead, session.unavailableItems(cart).get(0).getProductId());
+        assertEquals(1, session.availableItems(cart).size());
+    }
+
+    @Test
+    @DisplayName("canShipTogether is false when the available lines need two different shops")
+    void canShipTogetherFalseWhenLinesSplitAcrossShops() {
+        UUID first = UUID.randomUUID();
+        UUID second = UUID.randomUUID();
+        when(productCatalogService.getShopIdsForProduct(first, 12.9716, 77.5946)).thenReturn(Set.of(vendor1));
+        when(productCatalogService.getShopIdsForProduct(second, 12.9716, 77.5946)).thenReturn(Set.of(vendor2));
+        purchasable(first, second);
+
+        Cart cart = cartWith(first, 1);
+        addLine(cart, second, 1);
+
+        assertFalse(session().canShipTogether(cart));
+    }
+
+    @Test
+    @DisplayName("canShipTogether is true for a cart with no available line at all (nothing to arrange)")
+    void canShipTogetherTrueWhenNothingIsAvailable() {
+        UUID dead = UUID.randomUUID();
+        when(productCatalogService.getShopIdsForProduct(dead, 12.9716, 77.5946)).thenReturn(Set.of());
+
+        assertTrue(session().canShipTogether(cartWith(dead, 1)));
     }
 }

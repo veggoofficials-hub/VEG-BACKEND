@@ -8,8 +8,15 @@ import java.util.UUID;
 public interface CustomerBannerService {
 
     /**
-     * The banners this customer should see now: switched on, inside their schedule, in the admin's order, and not
-     * advertising a coupon this customer cannot use or opening a category / product that no longer exists.
+     * The banners this customer should see now at the given location: switched on, inside their schedule, in the
+     * admin's order, not advertising a coupon this customer cannot use, and not opening a category / product that
+     * no longer exists OR that cannot be ordered at this location.
      */
-    List<CustomerBannerDto> getBanners(UUID userId);
+    List<CustomerBannerDto> getBanners(UUID userId, double latitude, double longitude);
+
+    /**
+     * The same for a guest (not logged in). A coupon needs an account to be checked against, so banners that
+     * advertise a coupon code are left out for guests.
+     */
+    List<CustomerBannerDto> getGuestBanners(double latitude, double longitude);
 }

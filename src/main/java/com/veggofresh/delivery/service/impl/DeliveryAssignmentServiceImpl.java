@@ -22,6 +22,7 @@ import com.veggofresh.delivery.repository.DeliveryPartnerProfileRepository;
 import com.veggofresh.delivery.repository.DeliveryProofOfDeliveryRepository;
 import com.veggofresh.delivery.repository.EarningRecordRepository;
 import com.veggofresh.delivery.service.DeliveryAssignmentService;
+import com.veggofresh.platform.common.GeoDistance;
 import com.veggofresh.platform.exception.BusinessException;
 import com.veggofresh.customer.entity.Order;
 import com.veggofresh.customer.repository.OrderRepository;
@@ -912,14 +913,8 @@ public class DeliveryAssignmentServiceImpl implements DeliveryAssignmentService 
                 .build();
     }
 
+    /** Delegates to the shared formula (was a private duplicate of the one used by the customer catalog). */
     private static double haversineKm(double lat1, double lon1, double lat2, double lon2) {
-        final int R = 6371;
-        double dLat = Math.toRadians(lat2 - lat1);
-        double dLon = Math.toRadians(lon2 - lon1);
-        double a = Math.sin(dLat / 2) * Math.sin(dLat / 2)
-                + Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2))
-                        * Math.sin(dLon / 2) * Math.sin(dLon / 2);
-        double c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-        return R * c;
+        return GeoDistance.haversineKm(lat1, lon1, lat2, lon2);
     }
 }

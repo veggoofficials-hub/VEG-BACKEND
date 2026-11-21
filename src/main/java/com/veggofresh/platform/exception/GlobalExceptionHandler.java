@@ -105,11 +105,13 @@ public class GlobalExceptionHandler {
      * @return response with the exception's HTTP status and error code
      */
     @ExceptionHandler(BusinessException.class)
-    public ResponseEntity<ApiResponse<Void>> handleBusinessException(BusinessException ex) {
+    public ResponseEntity<ApiResponse<Object>> handleBusinessException(BusinessException ex) {
         log.warn("Business exception [{}]: {}", ex.getErrorCode(), ex.getMessage());
+        // Most business errors carry no details, so the body is exactly what it always was. Some
+        // (e.g. CART_ITEMS_UNAVAILABLE) also return structured details in "data".
         return ResponseEntity
                 .status(ex.getStatus())
-                .body(ApiResponse.error(ex.getMessage(), ex.getErrorCode()));
+                .body(ApiResponse.<Object>error(ex.getMessage(), ex.getErrorCode(), ex.getDetails()));
     }
 
     // -------------------------------------------------------------------------

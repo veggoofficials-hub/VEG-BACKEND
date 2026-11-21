@@ -18,6 +18,7 @@ import com.veggofresh.payment.dto.PaymentVerifyResultDto;
 import com.veggofresh.payment.dto.VerifyPaymentRequestDto;
 import com.veggofresh.payment.service.PaymentService;
 import com.veggofresh.platform.common.ApiResponse;
+import com.veggofresh.platform.common.GeoPoint;
 import com.veggofresh.platform.common.PageResponse;
 import com.veggofresh.platform.security.SecurityUtils;
 import jakarta.validation.Valid;
@@ -159,11 +160,17 @@ public class CustomerOrderController {
      * multi-cart logic as any add-to-cart call) and returns the resulting
      * open carts. The customer reviews and calls checkout() again, same as
      * any other cart — see OrderService.reorder() javadoc for why.
+     *
+     * LOCATION: {@code latitude}/{@code longitude} (required) are where the customer is browsing now; the items
+     * are checked and added there, not at the old order's delivery coordinates.
      */
     @PostMapping("/{id}/reorder")
     public ResponseEntity<ApiResponse<List<CartResponseDto>>> reorder(
-            @PathVariable UUID id) {
-        List<CartResponseDto> carts = orderService.reorder(SecurityUtils.getCurrentUserId(), id);
+            @PathVariable UUID id,
+            @RequestParam double latitude,
+            @RequestParam double longitude) {
+        List<CartResponseDto> carts = orderService.reorder(SecurityUtils.getCurrentUserId(), id,
+                GeoPoint.of(latitude, longitude));
         return ResponseEntity.ok(ApiResponse.success(carts, "Order items added back to your cart — review and checkout when ready"));
     }
 

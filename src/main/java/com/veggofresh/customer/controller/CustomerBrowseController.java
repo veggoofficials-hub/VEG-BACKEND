@@ -1,6 +1,7 @@
 package com.veggofresh.customer.controller;
 
 import com.veggofresh.platform.common.ApiResponse;
+import com.veggofresh.platform.common.GeoPoint;
 import com.veggofresh.platform.common.PageResponse;
 import com.veggofresh.vendor.dto.CategoryDto;
 import com.veggofresh.vendor.dto.CategoryTreeDto;
@@ -32,6 +33,11 @@ import org.springframework.security.access.prepost.PreAuthorize;
  * the new /categories and /categories/{categoryId}/subcategories endpoints
  * below -- it should never type or guess one, same flow as Vendor's category
  * picker.
+ *
+ * LOCATION: every category / subcategory / product endpoint now takes the
+ * customer's latitude and longitude and only returns what can be ordered
+ * there. /categories, /categories/all and /categories/{id}/subcategories used
+ * to be location-free (BREAKING: latitude and longitude are now required).
  */
 @RestController
 @RequestMapping("/api/customer")
@@ -45,16 +51,21 @@ public class CustomerBrowseController {
     public ResponseEntity<ApiResponse<List<ShopDto>>> browseShops(
             @RequestParam double latitude,
             @RequestParam double longitude) {
-        List<ShopDto> shops = productCatalogService.browseNearbyShops(latitude, longitude);
+        GeoPoint point = GeoPoint.of(latitude, longitude);
+        List<ShopDto> shops = productCatalogService.browseNearbyShops(point.latitude(), point.longitude());
         return ResponseEntity.ok(ApiResponse.success(shops, "Shops retrieved successfully"));
     }
 
     @GetMapping("/categories")
     public ResponseEntity<ApiResponse<PageResponse<CategoryDto>>> browseCategories(
             @RequestParam(required = false) String search,
+            @RequestParam double latitude,
+            @RequestParam double longitude,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
-        Page<CategoryDto> categories = productCatalogService.browseCategories(search, PageRequest.of(page, size));
+        GeoPoint point = GeoPoint.of(latitude, longitude);
+        Page<CategoryDto> categories = productCatalogService.browseCategories(
+                search, point.latitude(), point.longitude(), PageRequest.of(page, size));
         return ResponseEntity.ok(ApiResponse.success(PageResponse.of(categories), "Categories retrieved successfully"));
     }
 
@@ -62,24 +73,28 @@ public class CustomerBrowseController {
     public ResponseEntity<ApiResponse<PageResponse<SubcategoryDto>>> browseSubcategories(
             @PathVariable UUID categoryId,
             @RequestParam(required = false) String search,
+            @RequestParam double latitude,
+            @RequestParam double longitude,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
-        Page<SubcategoryDto> subcategories = productCatalogService.browseSubcategories(categoryId, search, PageRequest.of(page, size));
+        GeoPoint point = GeoPoint.of(latitude, longitude);
+        Page<SubcategoryDto> subcategories = productCatalogService.browseSubcategories(
+                categoryId, search, point.latitude(), point.longitude(), PageRequest.of(page, size));
         return ResponseEntity.ok(ApiResponse.success(PageResponse.of(subcategories), "Subcategories retrieved successfully"));
     }
 
     /**
-     * NEW -- one category, its subcategories, and each subcategory's eligible
-     * (radius-filtered, listed) products, all nested in one response. Category/
-     * subcategory data itself is not radius-filtered, matching /categories and
-     * /categories/{categoryId}/subcategories above; only the nested products are.
+     * One category, its subcategories, and each subcategory's eligible
+     * (radius-filtered, listed) products, all nested in one response.
+     * Subcategories that hold no orderable product at this location are left out.
      */
     @GetMapping("/categories/{categoryId}/tree")
     public ResponseEntity<ApiResponse<CategoryTreeDto>> getCategoryTree(
             @PathVariable UUID categoryId,
             @RequestParam double latitude,
             @RequestParam double longitude) {
-        CategoryTreeDto tree = productCatalogService.getCategoryTree(categoryId, latitude, longitude);
+        GeoPoint point = GeoPoint.of(latitude, longitude);
+        CategoryTreeDto tree = productCatalogService.getCategoryTree(categoryId, point.latitude(), point.longitude());
         return ResponseEntity.ok(ApiResponse.success(tree, "Category tree retrieved successfully"));
     }
 
@@ -93,7 +108,8 @@ public class CustomerBrowseController {
     public ResponseEntity<ApiResponse<List<CategoryTreeDto>>> getFullCatalogTree(
             @RequestParam double latitude,
             @RequestParam double longitude) {
-        List<CategoryTreeDto> tree = productCatalogService.getFullCatalogTree(latitude, longitude);
+        GeoPoint point = GeoPoint.of(latitude, longitude);
+        List<CategoryTreeDto> tree = productCatalogService.getFullCatalogTree(point.latitude(), point.longitude());
         return ResponseEntity.ok(ApiResponse.success(tree, "Full catalog tree retrieved successfully"));
     }
 
@@ -108,8 +124,10 @@ public class CustomerBrowseController {
             @RequestParam double longitude,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "10") int size) {
+        GeoPoint point = GeoPoint.of(latitude, longitude);
         Page<ProductDto> products = productCatalogService.searchProducts(
-                query, categoryId, subcategoryId, minPrice, maxPrice, latitude, longitude, PageRequest.of(page, size));
+                query, categoryId, subcategoryId, minPrice, maxPrice, point.latitude(), point.longitude(),
+                PageRequest.of(page, size));
         return ResponseEntity.ok(ApiResponse.success(PageResponse.of(products), "Products retrieved successfully"));
     }
 
@@ -118,13 +136,17 @@ public class CustomerBrowseController {
             @PathVariable UUID id,
             @RequestParam double latitude,
             @RequestParam double longitude) {
-        ProductDto product = productCatalogService.getProductById(id, latitude, longitude);
+        GeoPoint point = GeoPoint.of(latitude, longitude);
+        ProductDto product = productCatalogService.getProductById(id, point.latitude(), point.longitude());
         return ResponseEntity.ok(ApiResponse.success(product, "Product retrieved successfully"));
     }
 
     @GetMapping("/categories/all")
-    public ResponseEntity<ApiResponse<List<CategoryDto>>> getCategories() {
-        List<CategoryDto> categories = productCatalogService.getAllCategories();
+    public ResponseEntity<ApiResponse<List<CategoryDto>>> getCategories(
+            @RequestParam double latitude,
+            @RequestParam double longitude) {
+        GeoPoint point = GeoPoint.of(latitude, longitude);
+        List<CategoryDto> categories = productCatalogService.getAllCategories(point.latitude(), point.longitude());
         return ResponseEntity.ok(ApiResponse.success(categories, "Categories retrieved successfully"));
     }
 
@@ -133,7 +155,8 @@ public class CustomerBrowseController {
             @PathVariable UUID id,
             @RequestParam double latitude,
             @RequestParam double longitude) {
-        List<ProductDto> related = productCatalogService.getRelatedProducts(id, latitude, longitude);
+        GeoPoint point = GeoPoint.of(latitude, longitude);
+        List<ProductDto> related = productCatalogService.getRelatedProducts(id, point.latitude(), point.longitude());
         return ResponseEntity.ok(ApiResponse.success(related, "Related products retrieved successfully"));
     }
 
@@ -141,7 +164,8 @@ public class CustomerBrowseController {
     public ResponseEntity<ApiResponse<List<ProductDto>>> getDailyDeals(
             @RequestParam double latitude,
             @RequestParam double longitude) {
-        List<ProductDto> deals = productCatalogService.getDailyDeals(latitude, longitude);
+        GeoPoint point = GeoPoint.of(latitude, longitude);
+        List<ProductDto> deals = productCatalogService.getDailyDeals(point.latitude(), point.longitude());
         return ResponseEntity.ok(ApiResponse.success(deals, "Daily deals retrieved successfully"));
     }
 

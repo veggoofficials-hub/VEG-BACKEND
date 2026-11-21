@@ -13,7 +13,10 @@ import com.veggofresh.customer.dto.response.CartCheckoutBreakdownDto;
 import com.veggofresh.customer.dto.response.CartResponseDto;
 import com.veggofresh.customer.dto.response.CheckoutIssueDto;
 import com.veggofresh.customer.dto.response.CheckoutResultDto;
+import com.veggofresh.admin.dto.response.ProductResponseDto;
 import com.veggofresh.customer.dto.response.CheckoutSummaryDto;
+import com.veggofresh.customer.dto.response.UnavailableItemDto;
+import com.veggofresh.platform.common.GeoPoint;
 import com.veggofresh.customer.dto.response.InvoiceDto;
 import com.veggofresh.customer.dto.response.InvoiceLineItemDto;
 import com.veggofresh.customer.dto.response.OrderItemResponseDto;
@@ -219,26 +222,17 @@ public class OrderServiceImpl implements OrderService, PaymentAuthorizedHandler 
             // "Cart 1" on the screen — and the client ties these together.
             String cartLabel = CartServiceImpl.cartLabel(i);
 
-            // Re-validate vendor overlap fresh at checkout time — a cart's
-            // overlap may have broken since add-time even if untouched
-            // (PROJECT_STATE section 2, "Revisit-after-a-delay edge case").
+            // Re-validate everything fresh against the DELIVERY address: which lines cannot be delivered there,
+            // and whether the rest can still come from one shop. ALL-OR-NOTHING: if any selected cart has a
+            // problem, nothing is ordered or paid (see the check after this loop); the customer fixes the cart
+            // and orders again.
             CartVendorResolver.Session vendors = newVendorSession(address);
-            if (!vendors.revalidate(cart)) {
-                issues.add(issue(cart, cartLabel,
-                        "Some items in this group are no longer available together — remove them to continue, or we'll leave this group out of your order"));
+            CheckoutIssueDto problem = cartProblem(cart, cartLabel, vendors);
+            if (problem != null) {
+                issues.add(problem);
                 continue;
             }
-
-            // A cart can pass the overlap check and still have nothing buyable
-            // left (every product delisted or out of range). Building an order
-            // from it would charge a delivery fee and platform fee for zero
-            // items, so it is reported as an issue and skipped instead.
             List<CartItem> shippable = vendors.onlyShippableItems(cart);
-            if (shippable.isEmpty()) {
-                issues.add(issue(cart, cartLabel,
-                        "None of the items in this group are available for delivery to this address — we'll leave this group out of your order"));
-                continue;
-            }
 
             // Built here but only saved below: the coupon is one coupon for the whole checkout, so it can only be
             // valued once every order of this checkout is known.
@@ -246,6 +240,12 @@ public class OrderServiceImpl implements OrderService, PaymentAuthorizedHandler 
                     shippable));
             toPlaceCartIds.add(cart.getId());
             toPlaceLabels.add(cartLabel);
+        }
+
+        // All-or-nothing: a single unavailable line in a single selected cart blocks the whole checkout. Nothing has
+        // been saved, no payment was created and no coupon was taken, so the customer is not charged for anything.
+        if (!issues.isEmpty()) {
+            throw checkoutBlocked(issues);
         }
 
         if (toPlace.isEmpty()) {
@@ -329,8 +329,8 @@ public class OrderServiceImpl implements OrderService, PaymentAuthorizedHandler 
      * <p>The coupon is taken here, when the order is created, because there is no payment step to wait for.
      * It is given back if the order is cancelled, rejected or times out, exactly as for online orders.
      *
-     * <p>Carts that could not be ordered ({@code issues}) are reported, not blocking: the carts that can be
-     * ordered are ordered, and the skipped ones stay in the customer's cart.
+     * <p>Checkout is all-or-nothing: if any selected cart cannot be ordered to the chosen address, nothing is
+     * ordered (see {@link #checkoutBlocked}), so no cart ever reaches this method with a problem.
      */
     private CheckoutResultDto placeCodOrders(UUID userId, OrderRequestDto request, List<Order> toPlace,
             List<CouponMath.Basis> bases, CouponQuote quote, List<CheckoutIssueDto> issues) {
@@ -558,6 +558,73 @@ public class OrderServiceImpl implements OrderService, PaymentAuthorizedHandler 
                 .cartLabel(cartLabel)
                 .reason(reason)
                 .build();
+    }
+
+    /**
+     * What stops this cart from being ordered to the address the session is pinned to, or null when nothing does.
+     * Used by BOTH the checkout summary and checkout itself, so the preview and the real thing always agree.
+     *
+     * <ul>
+     *   <li>ITEMS_UNAVAILABLE: some lines cannot be delivered there. They are named so the app can grey them out.</li>
+     *   <li>NEEDS_ARRANGEMENT: every line can be delivered, but no single shop stocks all of them (the carts have
+     *       not been re-arranged for this address yet).</li>
+     * </ul>
+     */
+    private CheckoutIssueDto cartProblem(Cart cart, String cartLabel, CartVendorResolver.Session vendors) {
+        List<CartItem> unavailable = vendors.unavailableItems(cart);
+        if (!unavailable.isEmpty()) {
+            List<UnavailableItemDto> items = new ArrayList<>(unavailable.size());
+            for (CartItem item : unavailable) {
+                items.add(unavailableItemDto(item));
+            }
+            String reason = unavailable.size() == 1
+                    ? "1 item in this cart can't be delivered to this address — remove it to continue"
+                    : unavailable.size() + " items in this cart can't be delivered to this address — remove them to continue";
+            CheckoutIssueDto issue = issue(cart, cartLabel, reason);
+            issue.setIssueType("ITEMS_UNAVAILABLE");
+            issue.setItems(items);
+            return issue;
+        }
+        if (!vendors.revalidate(cart)) {
+            CheckoutIssueDto issue = issue(cart, cartLabel,
+                    "The items in this cart can't all be delivered together to this address — refresh your carts to continue");
+            issue.setIssueType("NEEDS_ARRANGEMENT");
+            issue.setItems(new ArrayList<>());
+            return issue;
+        }
+        return null;
+    }
+
+    /** A cart line that cannot be delivered, with the name and picture the app needs to show it greyed out. */
+    private UnavailableItemDto unavailableItemDto(CartItem item) {
+        // Optional lookup, never an exception (a swallowed one would poison this transaction).
+        java.util.Optional<ProductResponseDto> info = adminProductService.findProductById(item.getProductId());
+        boolean stillInCatalog = info.isPresent() && info.get().isActive();
+        return UnavailableItemDto.builder()
+                .cartItemId(item.getId())
+                .productId(item.getProductId())
+                .productName(info.map(ProductResponseDto::getName).orElse("Product no longer available"))
+                .productImageUrl(info.map(ProductResponseDto::getImageUrl).orElse(null))
+                .quantity(item.getQuantity())
+                .reason(stillInCatalog ? "NOT_AVAILABLE_AT_LOCATION" : "PRODUCT_UNAVAILABLE")
+                .build();
+    }
+
+    /**
+     * The 409 returned when checkout cannot go ahead. The response's {@code data} carries the issues (which carts,
+     * which lines) so the app can show them without a second call.
+     */
+    private BusinessException checkoutBlocked(List<CheckoutIssueDto> issues) {
+        boolean anyUnavailable = issues.stream().anyMatch(i -> "ITEMS_UNAVAILABLE".equals(i.getIssueType()));
+        String code = anyUnavailable ? "CART_ITEMS_UNAVAILABLE" : "CARTS_NEED_ARRANGEMENT";
+        String message = anyUnavailable
+                ? "Some items in your cart can't be delivered to this address. Remove them to continue."
+                : "Your carts need to be refreshed for this address before you can check out.";
+        CheckoutResultDto details = CheckoutResultDto.builder()
+                .orders(new ArrayList<>())
+                .issues(issues)
+                .build();
+        return new BusinessException(code, message, HttpStatus.CONFLICT, details);
     }
 
     /**
@@ -1095,7 +1162,7 @@ public class OrderServiceImpl implements OrderService, PaymentAuthorizedHandler 
     }
 
     @Override
-    public List<CartResponseDto> reorder(UUID userId, UUID orderId) {
+    public List<CartResponseDto> reorder(UUID userId, UUID orderId, GeoPoint location) {
         Order order = orderRepository.findByIdAndUserId(orderId, userId)
                 .orElseThrow(() -> new BusinessException("ORDER_NOT_FOUND", "Original order not found",
                         HttpStatus.NOT_FOUND));
@@ -1108,8 +1175,10 @@ public class OrderServiceImpl implements OrderService, PaymentAuthorizedHandler 
         // become unbuyable rolls the entire re-add back rather than leaving the
         // customer with a half-populated cart that looks like a bug.
         for (OrderItem item : order.getItems()) {
-            ProductDto product = productCatalogService.getProductById(item.getProductId(), order.getLatitude(),
-                    order.getLongitude());
+            // Checked at the customer's CURRENT location (where they are browsing now), not at the old order's
+            // delivery coordinates: the items are being added to a cart, and checkout re-checks the delivery address.
+            ProductDto product = productCatalogService.getProductById(item.getProductId(), location.latitude(),
+                    location.longitude());
             if (product == null) {
                 throw new BusinessException("PRODUCT_NOT_AVAILABLE",
                         "Some products from your previous order are no longer available", HttpStatus.BAD_REQUEST);
@@ -1118,13 +1187,13 @@ public class OrderServiceImpl implements OrderService, PaymentAuthorizedHandler 
             CartItemRequestDto req = new CartItemRequestDto();
             req.setProductId(item.getProductId());
             req.setQuantity(item.getQuantity());
-            cartService.addItemToCart(userId, req);
+            cartService.addItemToCart(userId, req, location);
         }
 
         // Previously this returned the result of the last addItemToCart call,
         // which is null for an order with no items — the client received a null
         // body inside a non-null ApiResponse wrapper.
-        return cartService.getOpenCarts(userId);
+        return cartService.getOpenCarts(userId, location);
     }
 
     @Override
@@ -1278,19 +1347,12 @@ public class OrderServiceImpl implements OrderService, PaymentAuthorizedHandler 
                 continue;
             }
 
-            // Same two exclusions checkout() applies, evaluated up front so the
-            // summary shows what will ACTUALLY be charged. A summary that
-            // includes a cart checkout will then reject is worse than no
-            // summary: the customer confirms a total that is wrong on submit.
-            if (!vendors.revalidate(cart)) {
-                issues.add(issue(cart, cartLabel,
-                        "Some items in this group are no longer available together — this group will be left out of your order"));
-                continue;
-            }
-            List<CartItem> shippable = vendors.onlyShippableItems(cart);
-            if (shippable.isEmpty()) {
-                issues.add(issue(cart, cartLabel,
-                        "None of the items in this group are available for delivery to this address — this group will be left out of your order"));
+            // The same check checkout() applies (cartProblem), evaluated up front, so the summary can never
+            // promise what checkout will then refuse. A cart with a problem is reported with the exact lines
+            // to remove and is left out of the totals; while any cart has a problem canCheckout is false.
+            CheckoutIssueDto problem = cartProblem(cart, cartLabel, vendors);
+            if (problem != null) {
+                issues.add(problem);
                 continue;
             }
 
@@ -1333,6 +1395,20 @@ public class OrderServiceImpl implements OrderService, PaymentAuthorizedHandler 
 
             totalItemCount += itemCount;
             grandTotal = grandTotal.add(total);
+        }
+
+        if (breakdowns.isEmpty() && !issues.isEmpty()) {
+            // Every selected cart has a problem at this address: report them instead of failing, so the app can
+            // show which lines to remove. Nothing is priced and the coupon is not valued.
+            return CheckoutSummaryDto.builder()
+                    .carts(breakdowns)
+                    .totalItemCount(0)
+                    .grandTotal(BigDecimal.ZERO)
+                    .issues(issues)
+                    .promoDiscount(BigDecimal.ZERO)
+                    .promoStatus(CouponQuote.Status.NONE.name())
+                    .canCheckout(false)
+                    .build();
         }
 
         if (breakdowns.isEmpty()) {
@@ -1390,6 +1466,7 @@ public class OrderServiceImpl implements OrderService, PaymentAuthorizedHandler 
                 .promoDiscount(quote.total())
                 .promoStatus(quote.status().name())
                 .promoMessage(quote.message())
+                .canCheckout(issues.isEmpty())
                 .build();
     }
 

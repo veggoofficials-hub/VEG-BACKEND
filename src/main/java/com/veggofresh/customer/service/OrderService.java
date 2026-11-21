@@ -10,6 +10,7 @@ import com.veggofresh.customer.dto.response.OrderResponseDto;
 import com.veggofresh.customer.dto.response.OrderTrackingResponseDto;
 import com.veggofresh.customer.dto.response.RatingResponseDto;
 import com.veggofresh.customer.entity.OrderStatus;
+import com.veggofresh.platform.common.GeoPoint;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 
@@ -57,7 +58,7 @@ public interface OrderService {
      * other cart. This mirrors the "no automatic retry" principle already
      * locked for Payment (PROJECT_STATE section 6).
      */
-    List<CartResponseDto> reorder(UUID userId, UUID orderId);
+    List<CartResponseDto> reorder(UUID userId, UUID orderId, GeoPoint location);
 
     InvoiceDto getInvoice(UUID userId, UUID orderId);
 

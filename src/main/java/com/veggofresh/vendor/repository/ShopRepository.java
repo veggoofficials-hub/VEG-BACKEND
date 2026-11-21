@@ -19,6 +19,9 @@ public interface ShopRepository extends JpaRepository<Shop, UUID> {
     Optional<Shop> findByIdAndDeletedAtIsNull(UUID id);
     List<Shop> findAllByDeletedAtIsNullAndIsOnlineTrueAndKycStatus(KycStatus kycStatus);
 
+    /** Every approved, non-deleted shop whether it is online or not (used by the serviceability check). */
+    List<Shop> findAllByDeletedAtIsNullAndKycStatus(KycStatus kycStatus);
+
     /**
      * NEW -- "awaiting review" means kycStatus PENDING AND the application has actually
      * been submitted (applicationSubmittedAt set) -- PENDING alone also matches shops

@@ -29,6 +29,10 @@ public interface VendorListingRepository extends JpaRepository<VendorListing, UU
     /** All shops (via their listing rows) currently listing this catalog product. */
     List<VendorListing> findByCatalogProductIdAndIsListedTrue(UUID catalogProductId);
 
+    /** Every catalog product that at least one of the given shops currently lists (one query, no per-product lookups). */
+    @Query("SELECT DISTINCT vl.catalogProductId FROM VendorListing vl WHERE vl.shop.id IN :shopIds AND vl.isListed = true")
+    List<UUID> findListedCatalogProductIdsByShopIdIn(@Param("shopIds") Collection<UUID> shopIds);
+
     /**
      * Paginated listings for /mine, with an optional isListed filter:
      *   null  -> ALL (both listed and unlisted rows -- unlisting no longer

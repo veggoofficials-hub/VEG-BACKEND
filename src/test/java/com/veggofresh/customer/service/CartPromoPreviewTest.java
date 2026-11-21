@@ -14,6 +14,7 @@ import com.veggofresh.customer.repository.CartRepository;
 import com.veggofresh.platform.exception.BusinessException;
 import com.veggofresh.vendor.dto.ProductDto;
 import com.veggofresh.vendor.service.ProductCatalogService;
+import com.veggofresh.platform.common.GeoPoint;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -59,6 +60,7 @@ class CartPromoPreviewTest {
 
     private static final double LAT = 12.9716;
     private static final double LNG = 77.5946;
+    private static final GeoPoint LOC = new GeoPoint(LAT, LNG);
 
     @Mock
     private CartRepository cartRepository;
@@ -170,7 +172,7 @@ class CartPromoPreviewTest {
         when(couponService.quote(eq(userId), any(), any())).thenReturn(
                 CouponQuote.applied(couponId, "WELCOME30", null, new BigDecimal("30.00"), shares));
 
-        CartPromoPreviewDto preview = cartService.previewPromo(userId, null, null);
+        CartPromoPreviewDto preview = cartService.previewPromo(userId, null, null, LOC);
 
         List<CouponMath.Basis> bases = capturedBases(null);
         assertEquals(2, bases.size(), "both carts go into ONE valuation");
@@ -199,7 +201,7 @@ class CartPromoPreviewTest {
         when(couponService.quote(eq(userId), any(), any())).thenReturn(CouponQuote.notApplicable(couponId,
                 "WELCOME30", "COUPON_MIN_ORDER_NOT_MET", "Add ₹60 more to get this discount (minimum order ₹120)."));
 
-        CartPromoPreviewDto preview = cartService.previewPromo(userId, null, null);
+        CartPromoPreviewDto preview = cartService.previewPromo(userId, null, null, LOC);
 
         assertEquals("NOT_APPLICABLE", preview.getStatus());
         assertEquals("WELCOME30", preview.getPromoCode());
@@ -214,7 +216,7 @@ class CartPromoPreviewTest {
         stubProduct(a, new BigDecimal("60"));
         givenCart(a, 1);
 
-        CartPromoPreviewDto preview = cartService.previewPromo(userId, null, null);
+        CartPromoPreviewDto preview = cartService.previewPromo(userId, null, null, LOC);
 
         assertEquals("NONE", preview.getStatus());
         assertNull(preview.getPromoCode());
@@ -233,7 +235,7 @@ class CartPromoPreviewTest {
         Cart cart1 = givenCart(a, 1);
         givenCart(b, 1);
 
-        cartService.previewPromo(userId, List.of(cart1.getId()), null);
+        cartService.previewPromo(userId, List.of(cart1.getId()), null, LOC);
 
         List<CouponMath.Basis> bases = capturedBases(null);
         assertEquals(List.of(cart1.getId()), bases.stream().map(CouponMath.Basis::key).collect(Collectors.toList()));
@@ -248,7 +250,7 @@ class CartPromoPreviewTest {
         givenCart(a, 1);
 
         BusinessException ex = assertThrows(BusinessException.class,
-                () -> cartService.previewPromo(userId, List.of(UUID.randomUUID()), null));
+                () -> cartService.previewPromo(userId, List.of(UUID.randomUUID()), null, LOC));
 
         assertEquals("CART_NOT_FOUND", ex.getErrorCode());
     }
@@ -256,7 +258,7 @@ class CartPromoPreviewTest {
     @Test
     @DisplayName("An empty bag is an empty preview, not an error, and the coupon is not valued")
     void emptyBagIsAnEmptyPreview() {
-        CartPromoPreviewDto preview = cartService.previewPromo(userId, null, null);
+        CartPromoPreviewDto preview = cartService.previewPromo(userId, null, null, LOC);
 
         assertEquals("NONE", preview.getStatus());
         assertEquals(0, BigDecimal.ZERO.compareTo(preview.getItemsSubtotal()));
@@ -272,7 +274,7 @@ class CartPromoPreviewTest {
         stubProduct(a, new BigDecimal("60"));
         givenCart(a, 1);
 
-        cartService.previewPromo(userId, null, "SAVE10");
+        cartService.previewPromo(userId, null, "SAVE10", LOC);
 
         capturedBases("SAVE10");
     }

@@ -1,10 +1,9 @@
 package com.veggofresh.customer.service.impl;
 
-import com.veggofresh.customer.entity.Address;
 import com.veggofresh.customer.entity.Wishlist;
-import com.veggofresh.customer.repository.AddressRepository;
 import com.veggofresh.customer.repository.WishlistRepository;
 import com.veggofresh.customer.service.WishlistService;
+import com.veggofresh.platform.common.GeoPoint;
 import com.veggofresh.platform.exception.BusinessException;
 import com.veggofresh.vendor.dto.ProductDto;
 import com.veggofresh.vendor.service.ProductCatalogService;
@@ -17,21 +16,18 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Objects;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
 /**
- * VENDOR CATALOG PIVOT PATCH: ProductCatalogService methods now require a
- * latitude/longitude. Resolves location the same way CartServiceImpl does --
- * the customer's default saved Address. See NOTES_CUSTOMER.md.
+ * LOCATION: the location now comes from the request (the place the customer is browsing from), not from a
+ * hidden default address. A saved item that cannot be ordered at that location is returned with
+ * {@code available=false} and a reason instead of being silently hidden, so a customer never thinks their list
+ * lost something.
  *
- * Also fixed here: getWishlist()'s `.filter(Objects::nonNull)` was already
- * dead code before this patch -- Vendor's getProductById has always thrown
- * rather than returned null on a missing/ineligible product, both before and
- * after the catalog pivot. One unavailable wishlist item would have crashed
- * the whole list. Now wrapped with safeGetProduct() so it's actually
- * reachable and does what it always visually intended to do.
+ * <p>No try/catch around catalog lookups on purpose: a swallowed exception from a nested
+ * {@code @Transactional} call marks this transaction rollback-only. The catalog's
+ * {@code getProductsWithAvailability} reports "not available" as data, never as an exception.
  */
 @Slf4j
 @Service
@@ -40,24 +36,21 @@ import java.util.stream.Collectors;
 public class WishlistServiceImpl implements WishlistService {
 
     private final WishlistRepository wishlistRepository;
-    private final AddressRepository addressRepository;
     private final ProductCatalogService productCatalogService;
 
     @Override
     @Transactional(readOnly = true)
-    public List<ProductDto> getWishlist(UUID userId) {
-        double[] location = resolveLocation(userId);
-        List<Wishlist> items = wishlistRepository.findByUserId(userId);
-        return items.stream()
-                .map(item -> safeGetProduct(item.getProductId(), location))
-                .filter(Objects::nonNull)
+    public List<ProductDto> getWishlist(UUID userId, GeoPoint location) {
+        List<UUID> productIds = wishlistRepository.findByUserId(userId).stream()
+                .map(Wishlist::getProductId)
                 .collect(Collectors.toList());
+        return productCatalogService.getProductsWithAvailability(productIds, location.latitude(), location.longitude());
     }
 
     @Override
     @Transactional(readOnly = true)
-    public List<ProductDto> getWishlistByCategory(UUID userId, String category) {
-        List<ProductDto> wishlist = getWishlist(userId);
+    public List<ProductDto> getWishlistByCategory(UUID userId, String category, GeoPoint location) {
+        List<ProductDto> wishlist = getWishlist(userId, location);
         if (category == null || category.trim().isEmpty()) {
             return wishlist;
         }
@@ -68,11 +61,13 @@ public class WishlistServiceImpl implements WishlistService {
 
     @Override
     @Transactional(readOnly = true)
-    public List<ProductDto> getWishlistRecommendations(UUID userId) {
-        double[] location = resolveLocation(userId);
-        List<ProductDto> wishlist = getWishlist(userId);
+    public List<ProductDto> getWishlistRecommendations(UUID userId, GeoPoint location) {
+        // Only the items that can be ordered here seed the recommendations.
+        List<ProductDto> wishlist = getWishlist(userId, location).stream()
+                .filter(ProductDto::isAvailable)
+                .collect(Collectors.toList());
         if (wishlist.isEmpty()) {
-            return productCatalogService.getDailyDeals(location[0], location[1]);
+            return productCatalogService.getDailyDeals(location.latitude(), location.longitude());
         }
 
         List<ProductDto> recommendations = new ArrayList<>();
@@ -80,7 +75,8 @@ public class WishlistServiceImpl implements WishlistService {
             // No try/catch -- a swallowed exception from a nested
             // @Transactional method still marks this transaction rollback-only
             // and resurfaces as UnexpectedRollbackException at commit.
-            List<ProductDto> related = productCatalogService.getRelatedProducts(p.getId(), location[0], location[1]);
+            List<ProductDto> related = productCatalogService.getRelatedProducts(p.getId(), location.latitude(),
+                    location.longitude());
             if (related != null) {
                 for (ProductDto r : related) {
                     if (recommendations.stream().noneMatch(rec -> rec.getId().equals(r.getId()))) {
@@ -93,9 +89,8 @@ public class WishlistServiceImpl implements WishlistService {
     }
 
     @Override
-    public void addToWishlist(UUID userId, UUID productId) {
-        double[] location = resolveLocation(userId);
-        ProductDto product = productCatalogService.getProductById(productId, location[0], location[1]);
+    public void addToWishlist(UUID userId, UUID productId, GeoPoint location) {
+        ProductDto product = productCatalogService.getProductById(productId, location.latitude(), location.longitude());
         if (product == null) {
             throw new BusinessException("PRODUCT_NOT_FOUND", "Product not found in catalog", HttpStatus.BAD_REQUEST);
         }
@@ -125,32 +120,5 @@ public class WishlistServiceImpl implements WishlistService {
 
         wishlist.softDelete();
         wishlistRepository.save(wishlist);
-    }
-
-    private double[] resolveLocation(UUID userId) {
-        List<com.veggofresh.customer.entity.Address> addresses = addressRepository.findByUserId(userId);
-        Address reference = addresses.stream()
-                .filter(Address::isDefault)
-                .findFirst()
-                .orElse(addresses.isEmpty() ? null : addresses.get(0));
-
-        if (reference == null) {
-            throw new BusinessException("ADDRESS_REQUIRED",
-                    "Add a delivery address before using your wishlist", HttpStatus.BAD_REQUEST);
-        }
-        return new double[]{reference.getLatitude(), reference.getLongitude()};
-    }
-
-    /**
-     * ⚠️ No try/catch on purpose, and don't add one. It uses the non-throwing
-     * {@code findEligibleProductById} because a swallowed exception raised
-     * inside a nested {@code @Transactional} method still marks the caller's
-     * shared transaction rollback-only, resurfacing at commit as
-     * {@code UnexpectedRollbackException}.
-     */
-    private ProductDto safeGetProduct(UUID productId, double[] location) {
-        return productCatalogService
-                .findEligibleProductById(productId, location[0], location[1])
-                .orElse(null);
     }
 }

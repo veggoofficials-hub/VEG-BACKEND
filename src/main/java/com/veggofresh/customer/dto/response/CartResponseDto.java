@@ -53,4 +53,13 @@ public class CartResponseDto {
      * of rows it is rendering, and offer to remove them.
      */
     private int unavailableItemCount;
+
+    /** true when at least one line is unavailable at this location (see each item's {@code available}). */
+    private boolean hasUnavailableItems;
+
+    /**
+     * true when the AVAILABLE lines of this cart cannot all come from one shop at this location. The app should
+     * call POST /api/customer/carts/arrange (it regroups the carts automatically) and show the result.
+     */
+    private boolean needsArrangement;
 }

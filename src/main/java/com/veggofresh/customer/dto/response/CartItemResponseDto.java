@@ -21,4 +21,14 @@ public class CartItemResponseDto {
     private int quantity;
     private BigDecimal subTotal;
     private String productImageUrl;
+
+    /**
+     * true when this line can be bought at the location the cart was requested for. false = show it greyed out
+     * with a Remove button; it is NOT part of the cart's totals, itemCount or payable amount.
+     */
+    @Builder.Default
+    private boolean available = true;
+
+    /** null when available; otherwise NOT_AVAILABLE_AT_LOCATION or PRODUCT_UNAVAILABLE. */
+    private String unavailableReason;
 }

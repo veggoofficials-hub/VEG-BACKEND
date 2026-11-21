@@ -2,6 +2,7 @@ package com.veggofresh.customer.controller;
 
 import com.veggofresh.customer.service.WishlistService;
 import com.veggofresh.platform.common.ApiResponse;
+import com.veggofresh.platform.common.GeoPoint;
 import com.veggofresh.platform.security.SecurityUtils;
 import com.veggofresh.vendor.dto.ProductDto;
 
@@ -19,6 +20,10 @@ import java.util.List;
 import java.util.UUID;
 import org.springframework.security.access.prepost.PreAuthorize;
 
+/**
+ * Wishlist. LOCATION: reads and add take the latitude/longitude the customer is browsing from (required).
+ * Saved items that cannot be ordered there come back with {@code available=false} instead of disappearing.
+ */
 @RestController
 @RequestMapping("/api/customer/wishlist")
 @RequiredArgsConstructor
@@ -29,20 +34,25 @@ public class CustomerWishlistController {
 
     @GetMapping
     public ResponseEntity<ApiResponse<List<ProductDto>>> getWishlist(
-            @RequestParam(required = false) String category) {
+            @RequestParam(required = false) String category,
+            @RequestParam double latitude,
+            @RequestParam double longitude) {
+        GeoPoint location = GeoPoint.of(latitude, longitude);
         List<ProductDto> wishlist;
         if (category != null && !category.trim().isEmpty()) {
-            wishlist = wishlistService.getWishlistByCategory(SecurityUtils.getCurrentUserId(), category);
+            wishlist = wishlistService.getWishlistByCategory(SecurityUtils.getCurrentUserId(), category, location);
         } else {
-            wishlist = wishlistService.getWishlist(SecurityUtils.getCurrentUserId());
+            wishlist = wishlistService.getWishlist(SecurityUtils.getCurrentUserId(), location);
         }
         return ResponseEntity.ok(ApiResponse.success(wishlist, "Wishlist retrieved successfully"));
     }
 
     @PostMapping
     public ResponseEntity<ApiResponse<Void>> addToWishlist(
-            @RequestParam UUID productId) {
-        wishlistService.addToWishlist(SecurityUtils.getCurrentUserId(), productId);
+            @RequestParam UUID productId,
+            @RequestParam double latitude,
+            @RequestParam double longitude) {
+        wishlistService.addToWishlist(SecurityUtils.getCurrentUserId(), productId, GeoPoint.of(latitude, longitude));
         return ResponseEntity.ok(ApiResponse.success("Product added to wishlist successfully"));
     }
 
@@ -54,8 +64,11 @@ public class CustomerWishlistController {
     }
 
     @GetMapping("/recommendations")
-    public ResponseEntity<ApiResponse<List<ProductDto>>> getRecommendations() {
-        List<ProductDto> products = wishlistService.getWishlistRecommendations(SecurityUtils.getCurrentUserId());
+    public ResponseEntity<ApiResponse<List<ProductDto>>> getRecommendations(
+            @RequestParam double latitude,
+            @RequestParam double longitude) {
+        List<ProductDto> products = wishlistService.getWishlistRecommendations(
+                SecurityUtils.getCurrentUserId(), GeoPoint.of(latitude, longitude));
         return ResponseEntity.ok(ApiResponse.success(products, "Wishlist recommendations retrieved successfully"));
     }
 }

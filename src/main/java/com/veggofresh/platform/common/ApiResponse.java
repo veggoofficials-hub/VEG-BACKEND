@@ -99,4 +99,9 @@ public class ApiResponse<T> {
     public static <T> ApiResponse<T> error(String message, String errorCode) {
         return new ApiResponse<>(false, message, null, errorCode);
     }
+
+    /** An error that also carries structured details (for example the list of unavailable cart items). */
+    public static <T> ApiResponse<T> error(String message, String errorCode, T data) {
+        return new ApiResponse<>(false, message, data, errorCode);
+    }
 }

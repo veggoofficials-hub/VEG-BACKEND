@@ -16,8 +16,9 @@ import lombok.Data;
  *   <li>{@code text} -- the customer typed a message</li>
  * </ul>
  * Always echo back the {@code conversationId} and {@code context} from the previous reply.
- * {@code latitude}/{@code longitude} are optional; when absent the customer's default
- * saved address is used for "deals" and product search.
+ * {@code latitude}/{@code longitude} should be sent with every message (the location the customer
+ * is browsing from): "deals", product search and "my cart" need them. When absent the bot asks the
+ * customer to pick a location; there is no default-address fallback any more.
  */
 @Data
 public class ChatRequestDto {

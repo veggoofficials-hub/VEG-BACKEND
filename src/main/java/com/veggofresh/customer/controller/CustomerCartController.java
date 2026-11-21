@@ -6,6 +6,7 @@ import com.veggofresh.customer.dto.response.CartPromoPreviewDto;
 import com.veggofresh.customer.dto.response.CartResponseDto;
 import com.veggofresh.customer.service.CartService;
 import com.veggofresh.platform.common.ApiResponse;
+import com.veggofresh.platform.common.GeoPoint;
 import com.veggofresh.platform.security.SecurityUtils;
 import com.veggofresh.vendor.dto.ProductDto;
 
@@ -42,6 +43,11 @@ import org.springframework.security.access.prepost.PreAuthorize;
  *
  * Front-end needs to switch to rendering a "Cart 1 / Cart 2 / ..." list from
  * every response instead of a single cart object.
+ *
+ * LOCATION: every endpoint except /count takes {@code latitude} and {@code longitude} as REQUIRED query
+ * parameters (also on POST/PUT/DELETE): the coordinates of the address the customer has selected in the app.
+ * Items that cannot be bought there come back with {@code available=false}. POST /arrange re-groups the carts
+ * for that location and must be called after the customer changes address.
  */
 @RestController
 @RequestMapping("/api/customer/carts")
@@ -52,30 +58,57 @@ public class CustomerCartController {
     private final CartService cartService;
 
     @GetMapping
-    public ResponseEntity<ApiResponse<List<CartResponseDto>>> getCarts() {
-        List<CartResponseDto> carts = cartService.getOpenCarts(SecurityUtils.getCurrentUserId());
+    public ResponseEntity<ApiResponse<List<CartResponseDto>>> getCarts(
+            @RequestParam double latitude,
+            @RequestParam double longitude) {
+        List<CartResponseDto> carts = cartService.getOpenCarts(SecurityUtils.getCurrentUserId(),
+                GeoPoint.of(latitude, longitude));
         return ResponseEntity.ok(ApiResponse.success(carts, "Carts retrieved successfully"));
+    }
+
+    /**
+     * Re-groups ALL the customer's carts for the given location into the fewest carts that one shop can each
+     * fulfil. Call it whenever the customer changes address, then render the returned carts. Unavailable items
+     * stay in place (greyed out); available ones are split or merged between carts automatically. 409
+     * PAYMENT_IN_PROGRESS while an online payment is waiting.
+     */
+    @PostMapping("/arrange")
+    public ResponseEntity<ApiResponse<List<CartResponseDto>>> arrangeCarts(
+            @RequestParam double latitude,
+            @RequestParam double longitude) {
+        List<CartResponseDto> carts = cartService.arrangeCarts(SecurityUtils.getCurrentUserId(),
+                GeoPoint.of(latitude, longitude));
+        return ResponseEntity.ok(ApiResponse.success(carts, "Carts arranged successfully"));
     }
 
     @PostMapping("/items")
     public ResponseEntity<ApiResponse<List<CartResponseDto>>> addItem(
+            @RequestParam double latitude,
+            @RequestParam double longitude,
             @Valid @RequestBody CartItemRequestDto request) {
-        List<CartResponseDto> carts = cartService.addItemToCart(SecurityUtils.getCurrentUserId(), request);
+        List<CartResponseDto> carts = cartService.addItemToCart(SecurityUtils.getCurrentUserId(), request,
+                GeoPoint.of(latitude, longitude));
         return ResponseEntity.ok(ApiResponse.success(carts, "Item added to cart successfully"));
     }
 
     @PutMapping("/items/{id}")
     public ResponseEntity<ApiResponse<List<CartResponseDto>>> updateItemQuantity(
             @PathVariable UUID id,
-            @RequestParam int quantity) {
-        List<CartResponseDto> carts = cartService.updateCartItem(SecurityUtils.getCurrentUserId(), id, quantity);
+            @RequestParam int quantity,
+            @RequestParam double latitude,
+            @RequestParam double longitude) {
+        List<CartResponseDto> carts = cartService.updateCartItem(SecurityUtils.getCurrentUserId(), id, quantity,
+                GeoPoint.of(latitude, longitude));
         return ResponseEntity.ok(ApiResponse.success(carts, "Cart item updated successfully"));
     }
 
     @DeleteMapping("/items/{id}")
     public ResponseEntity<ApiResponse<List<CartResponseDto>>> removeItem(
-            @PathVariable UUID id) {
-        List<CartResponseDto> carts = cartService.removeCartItem(SecurityUtils.getCurrentUserId(), id);
+            @PathVariable UUID id,
+            @RequestParam double latitude,
+            @RequestParam double longitude) {
+        List<CartResponseDto> carts = cartService.removeCartItem(SecurityUtils.getCurrentUserId(), id,
+                GeoPoint.of(latitude, longitude));
         return ResponseEntity.ok(ApiResponse.success(carts, "Item removed from cart successfully"));
     }
 
@@ -86,8 +119,11 @@ public class CustomerCartController {
     }
 
     @GetMapping("/recommendations")
-    public ResponseEntity<ApiResponse<List<ProductDto>>> getRecommendations() {
-        List<ProductDto> products = cartService.getCartRecommendations(SecurityUtils.getCurrentUserId());
+    public ResponseEntity<ApiResponse<List<ProductDto>>> getRecommendations(
+            @RequestParam double latitude,
+            @RequestParam double longitude) {
+        List<ProductDto> products = cartService.getCartRecommendations(SecurityUtils.getCurrentUserId(),
+                GeoPoint.of(latitude, longitude));
         return ResponseEntity.ok(ApiResponse.success(products, "Cart recommendations retrieved successfully"));
     }
 
@@ -99,23 +135,32 @@ public class CustomerCartController {
     @GetMapping("/promo-preview")
     public ResponseEntity<ApiResponse<CartPromoPreviewDto>> previewPromo(
             @RequestParam(required = false) List<UUID> cartIds,
-            @RequestParam(required = false) String couponCode) {
-        CartPromoPreviewDto preview = cartService.previewPromo(SecurityUtils.getCurrentUserId(), cartIds, couponCode);
+            @RequestParam(required = false) String couponCode,
+            @RequestParam double latitude,
+            @RequestParam double longitude) {
+        CartPromoPreviewDto preview = cartService.previewPromo(SecurityUtils.getCurrentUserId(), cartIds, couponCode,
+                GeoPoint.of(latitude, longitude));
         return ResponseEntity.ok(ApiResponse.success(preview, "Promo preview retrieved successfully"));
     }
 
     @PostMapping("/{cartId}/promo-code")
     public ResponseEntity<ApiResponse<List<CartResponseDto>>> applyPromoCode(
             @PathVariable UUID cartId,
+            @RequestParam double latitude,
+            @RequestParam double longitude,
             @Valid @RequestBody PromoCodeRequestDto request) {
-        List<CartResponseDto> carts = cartService.applyPromoCode(SecurityUtils.getCurrentUserId(), cartId, request.getCode());
+        List<CartResponseDto> carts = cartService.applyPromoCode(SecurityUtils.getCurrentUserId(), cartId,
+                request.getCode(), GeoPoint.of(latitude, longitude));
         return ResponseEntity.ok(ApiResponse.success(carts, "Promo code applied successfully"));
     }
 
     @DeleteMapping("/{cartId}/promo-code")
     public ResponseEntity<ApiResponse<List<CartResponseDto>>> removePromoCode(
-            @PathVariable UUID cartId) {
-        List<CartResponseDto> carts = cartService.removePromoCode(SecurityUtils.getCurrentUserId(), cartId);
+            @PathVariable UUID cartId,
+            @RequestParam double latitude,
+            @RequestParam double longitude) {
+        List<CartResponseDto> carts = cartService.removePromoCode(SecurityUtils.getCurrentUserId(), cartId,
+                GeoPoint.of(latitude, longitude));
         return ResponseEntity.ok(ApiResponse.success(carts, "Promo code removed successfully"));
     }
 }

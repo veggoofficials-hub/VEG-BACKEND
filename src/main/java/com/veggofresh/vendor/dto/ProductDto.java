@@ -40,4 +40,16 @@ public class ProductDto {
     private String badge;
     private List<String> whyItsGreat;
     private String storageTips;
+
+    /**
+     * true for every product returned by browse/search. It is false only on rows that are shown on purpose
+     * even though they cannot be ordered at the customer's current location (a saved wishlist item, or a
+     * guest's locally stored wishlist). In that case {@code shopId}/{@code shopName}/{@code price}-related
+     * ordering data is not usable and {@code unavailableReason} says why.
+     */
+    @Builder.Default
+    private boolean available = true;
+
+    /** null when {@code available}; otherwise NOT_AVAILABLE_AT_LOCATION or PRODUCT_UNAVAILABLE. */
+    private String unavailableReason;
 }

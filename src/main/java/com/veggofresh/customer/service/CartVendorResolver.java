@@ -236,7 +236,9 @@ public class CartVendorResolver {
                 if (cart == null || cart.getItems() == null || cart.getItems().isEmpty()) {
                     continue;
                 }
-                Set<UUID> overlap = new HashSet<>(effectiveVendorIds(cart));
+                // Only the items that can be bought here count: a greyed-out (unavailable) line in a cart must
+                // not stop the cart from taking new items.
+                Set<UUID> overlap = new HashSet<>(availableVendorIds(cart));
                 overlap.retainAll(productVendors);
                 if (overlap.size() > bestScore) {
                     bestScore = overlap.size();
@@ -253,9 +255,54 @@ public class CartVendorResolver {
          * rather than monotonically degrading.
          */
         public Set<UUID> resync(Cart cart) {
-            Set<UUID> live = new HashSet<>(effectiveVendorIds(cart));
+            // Available-only, so a greyed-out line cannot empty the stored set of the items that CAN be bought.
+            Set<UUID> live = new HashSet<>(availableVendorIds(cart));
             cart.setCandidateVendorIds(live);
             return live;
+        }
+
+        /** True when this line can be bought here: the product is purchasable AND at least one shop in range stocks it. */
+        public boolean isAvailable(CartItem item) {
+            if (item == null) {
+                return false;
+            }
+            UUID productId = item.getProductId();
+            return isPurchasable(productId) && !vendorsFor(productId).isEmpty();
+        }
+
+        /** The lines of a cart that can be bought here, in list order. */
+        public List<CartItem> availableItems(Cart cart) {
+            return onlyShippableItems(cart);
+        }
+
+        /** The lines of a cart that CANNOT be bought here (shown greyed out, the customer removes them). */
+        public List<CartItem> unavailableItems(Cart cart) {
+            List<CartItem> unavailable = new ArrayList<>();
+            if (cart == null || cart.getItems() == null) {
+                return unavailable;
+            }
+            for (CartItem item : cart.getItems()) {
+                if (item != null && !isAvailable(item)) {
+                    unavailable.add(item);
+                }
+            }
+            return unavailable;
+        }
+
+        /**
+         * The shops that can supply ALL the available lines of this cart at once. Same intersection as
+         * {@link #effectiveVendorIds}, but unavailable lines are ignored instead of emptying the set.
+         */
+        public Set<UUID> availableVendorIds(Cart cart) {
+            return intersectionFor(availableItems(cart));
+        }
+
+        /**
+         * False when the available lines of this cart cannot all come from one shop at this location, i.e. the
+         * carts need re-arranging for this address (see CartArranger). A cart with no available line is fine.
+         */
+        public boolean canShipTogether(Cart cart) {
+            return availableItems(cart).isEmpty() || !availableVendorIds(cart).isEmpty();
         }
 
         /**
@@ -290,12 +337,10 @@ public class CartVendorResolver {
         /**
          * The carts a customer should actually see, in list order.
          *
-         * <p>A cart qualifies only if it can show and charge at least one item
-         * here. Two things disqualify one: it lost its last line (a row-level
-         * ghost), or every line it still holds points at a product that is no
-         * longer available at this location. The second case is the one that
-         * matters: the client otherwise draws a card with an empty item list, a
-         * 0 total and a checkout button that cannot work.
+         * <p>A cart qualifies when it still holds at least one line. A cart whose lines are ALL unavailable at
+         * this location is still shown (its lines come back flagged {@code available=false} and greyed out), so
+         * the customer can see what is wrong and remove it; it used to be hidden, which left the customer with a
+         * silent hole in their cart. Only a cart that lost its last line (a row-level ghost) is dropped.
          *
          * <p>This lives here, not in either caller, on purpose. The cart screen
          * and the checkout summary both number their carts "Cart 1, Cart 2, ..."
@@ -310,7 +355,7 @@ public class CartVendorResolver {
                 return visible;
             }
             for (Cart cart : carts) {
-                if (cart != null && cart.hasItems() && !onlyShippableItems(cart).isEmpty()) {
+                if (cart != null && cart.hasItems()) {
                     visible.add(cart);
                 }
             }

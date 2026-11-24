@@ -50,6 +50,9 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
      */
     List<Order> findByAcceptedShopIdOrderByCreatedAtDesc(UUID shopId);
 
+    /** True if this shop has accepted at least one order that is in any of the given statuses. */
+    boolean existsByAcceptedShopIdAndStatusIn(UUID shopId, Collection<OrderStatus> statuses);
+
     /**
      * NEW THIS ROUND -- real atomic accept for the vendor-accept race, now recording
      * WHO won directly in the same statement (acceptedShopId) -- previously acceptOrder
@@ -78,6 +81,9 @@ public interface OrderRepository extends JpaRepository<Order, UUID> {
     Page<Order> findByUserIdAndStatusIn(UUID userId, List<OrderStatus> statuses, Pageable pageable);
 
     long countByUserId(UUID userId);
+
+    /** True if this customer has at least one order in any of the given statuses (account-deletion pre-check). */
+    boolean existsByUserIdAndStatusIn(UUID userId, Collection<OrderStatus> statuses);
 
     /** Count orders accepted (won) by a specific vendor shop. */
     long countByAcceptedShopId(UUID shopId);

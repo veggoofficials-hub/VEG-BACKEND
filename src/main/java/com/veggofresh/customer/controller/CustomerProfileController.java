@@ -26,6 +26,8 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.security.access.prepost.PreAuthorize;
+import com.veggofresh.customer.dto.request.AccountDeletionRequestDto;
+import com.veggofresh.customer.service.CustomerAccountDeletionService;
 
 /**
  * Customer Profile & Address Management
@@ -36,6 +38,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
  *                                        multipart/form-data call (PATCH semantics —
  *                                        only the parts you send are changed)
  * GET  /api/customer/profile/summary  — aggregated stats card
+ * DELETE /api/customer/account       — self-service account deletion (see CustomerAccountDeletionService)
  *
  * GET    /api/customer/addresses      — list addresses
  * POST   /api/customer/addresses      — add address
@@ -54,6 +57,7 @@ public class CustomerProfileController {
 
     private final CustomerProfileService customerProfileService;
     private final AddressService addressService;
+    private final CustomerAccountDeletionService customerAccountDeletionService;
 
     @GetMapping("/profile")
     public ResponseEntity<ApiResponse<CustomerProfileResponseDto>> getProfile() {
@@ -82,6 +86,17 @@ public class CustomerProfileController {
         CustomerProfileSummaryDto summary =
                 customerProfileService.getProfileSummary(SecurityUtils.getCurrentUserId());
         return ResponseEntity.ok(ApiResponse.success(summary, "Customer profile summary retrieved successfully"));
+    }
+
+    /**
+     * Self-service account deletion. Refused (409) if the customer has an order still in progress or a
+     * non-zero wallet balance, and (403) if the account is blocked. No OTP / password re-verification --
+     * the frontend's confirm dialog is the only gate before this call.
+     */
+    @DeleteMapping("/account")
+    public ResponseEntity<ApiResponse<Void>> deleteAccount(@Valid @RequestBody AccountDeletionRequestDto request) {
+        customerAccountDeletionService.deleteAccount(SecurityUtils.getCurrentUserId(), request);
+        return ResponseEntity.ok(ApiResponse.success("Account deletion request completed successfully"));
     }
 
     @GetMapping("/addresses")

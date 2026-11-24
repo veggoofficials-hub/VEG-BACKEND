@@ -57,6 +57,12 @@ public interface CustomerOrderService extends com.veggofresh.payment.service.Pay
      */
     List<OrderResponseDto> getAcceptedOrdersForShop(UUID shopId);
 
+    /**
+     * True if this shop has accepted an order that is not finished yet (confirmed, preparing, ready for
+     * pickup or out for delivery). Used by the vendor's account-deletion pre-check.
+     */
+    boolean hasActiveOrdersForShop(UUID shopId);
+
     // ── Delivery-facing methods ──────────────────────────
 
     void assignDeliveryAgent(UUID orderId, String agentName, String agentPhone,

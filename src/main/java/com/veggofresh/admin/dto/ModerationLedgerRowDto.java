@@ -49,4 +49,12 @@ public class ModerationLedgerRowDto {
     private String accountState;
 
     private boolean isBlocked;
+
+    /** Real number of this customer's cancelled orders (shown on its own, not turned into a guessed label). */
+    private long cancelledOrders;
+
+    /** Block details -- filled only while the account is blocked. */
+    private String blockedReason;
+    private java.time.Instant blockedAt;
+    private boolean payoutsOnHold;
 }

@@ -37,6 +37,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private static final String BEARER_PREFIX = "Bearer ";
 
     private final JwtTokenProvider jwtTokenProvider;
+    private final SessionRevocationChecker sessionRevocationChecker;
 
     @Override
     protected void doFilterInternal(HttpServletRequest request,
@@ -56,6 +57,15 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 }
 
                 UUID userId = jwtTokenProvider.extractUserId(token);
+
+                // The account was deleted after this token was issued: refuse it (every device, at once).
+                // The request continues unauthenticated, so protected URLs answer exactly as they do for
+                // an expired token and the app falls back to its login screen.
+                if (sessionRevocationChecker.isRevoked(userId, jwtTokenProvider.extractIssuedAt(token))) {
+                    log.debug("Access token of deleted account {} refused", userId);
+                    filterChain.doFilter(request, response);
+                    return;
+                }
                 String role  = jwtTokenProvider.extractRole(token);
                 String email = jwtTokenProvider.extractEmail(token);
 

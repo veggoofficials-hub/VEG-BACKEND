@@ -54,4 +54,14 @@ public class AdminCustomerLedgerDto {
     private boolean isBlocked;
 
     private boolean isVerified;
+
+    /** Block details -- filled only while the account is blocked. */
+    private String blockedReason;
+    private Instant blockedAt;
+    private boolean payoutsOnHold;
+
+    /** The same phone + role was self-deleted before (a returning user). */
+    private boolean previouslyDeleted;
+    private int previousDeletionCount;
+    private Instant lastDeletedAt;
 }

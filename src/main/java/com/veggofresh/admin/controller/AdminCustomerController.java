@@ -16,6 +16,12 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.UUID;
+import com.veggofresh.admin.dto.request.BlockAccountRequestDto;
+import com.veggofresh.admin.dto.request.UnblockAccountRequestDto;
+import com.veggofresh.admin.service.AdminAccountBlockService;
+import com.veggofresh.auth.entity.UserRole;
+import com.veggofresh.platform.security.SecurityUtils;
+import jakarta.validation.Valid;
 
 /**
  * Admin Customer Management Controller
@@ -25,7 +31,6 @@ import java.util.UUID;
  * GET  /api/admin/customers/stats               → 4 header stat cards
  * GET  /api/admin/customers                     → Registered Customer Ledger (paginated + search)
  * GET  /api/admin/customers/{userId}            → Single customer detail (eye icon)
- * DELETE /api/admin/customers/{userId}          → Soft-delete customer (delete icon)
  *
  * ── Moderation Center (Block / Unblock Accounts screen) ───────────────────
  * GET  /api/admin/customers/moderation/stats    → 3 moderation stat cards
@@ -41,6 +46,7 @@ import java.util.UUID;
 public class AdminCustomerController {
 
     private final AdminCustomerService adminCustomerService;
+    private final AdminAccountBlockService adminAccountBlockService;
 
     // ─────────────────────────────────────────────────────────────────────────
     // CUSTOMER BASE — View Customers screen
@@ -83,16 +89,6 @@ public class AdminCustomerController {
         return ResponseEntity.ok(ApiResponse.success(customer, "Customer details retrieved successfully"));
     }
 
-    /**
-     * DELETE /api/admin/customers/{userId}
-     * Soft-deletes a customer account — triggered by the delete (trash) icon.
-     */
-    @DeleteMapping("/{userId}")
-    public ResponseEntity<ApiResponse<Void>> deleteCustomer(@PathVariable UUID userId) {
-        adminCustomerService.deleteCustomer(userId);
-        return ResponseEntity.ok(ApiResponse.success("Customer account deleted successfully"));
-    }
-
     // ─────────────────────────────────────────────────────────────────────────
     // MODERATION CENTER — Block / Unblock Accounts screen
     // ─────────────────────────────────────────────────────────────────────────
@@ -124,22 +120,26 @@ public class AdminCustomerController {
     }
 
     /**
-     * PUT /api/admin/customers/{userId}/block
-     * Blocks a customer account — "Block Account" button in the moderation ledger.
+     * PUT /api/admin/customers/{userId}/block   body: {"reason": "...", "holdPayouts": false}
+     * Blocks a customer account — "Block Account" button in the moderation ledger. The customer is put in
+     * restricted mode: they keep their login and can follow orders already in progress, but cannot place new
+     * ones. The reason is required and is shown to the customer.
      */
     @PutMapping("/{userId}/block")
-    public ResponseEntity<ApiResponse<Void>> blockCustomer(@PathVariable UUID userId) {
-        adminCustomerService.blockCustomer(userId);
+    public ResponseEntity<ApiResponse<Void>> blockCustomer(@PathVariable UUID userId,
+                                                           @Valid @RequestBody BlockAccountRequestDto request) {
+        adminAccountBlockService.block(UserRole.CUSTOMER, userId, request, SecurityUtils.getCurrentUserId());
         return ResponseEntity.ok(ApiResponse.success("Customer account blocked successfully"));
     }
 
     /**
-     * PUT /api/admin/customers/{userId}/unblock
-     * Restores customer access — "Restore Access" button in the moderation ledger.
+     * PUT /api/admin/customers/{userId}/unblock   body (optional): {"note": "..."}
+     * Restores customer access — "Restore Access" button in the moderation ledger. The customer is notified.
      */
     @PutMapping("/{userId}/unblock")
-    public ResponseEntity<ApiResponse<Void>> unblockCustomer(@PathVariable UUID userId) {
-        adminCustomerService.unblockCustomer(userId);
+    public ResponseEntity<ApiResponse<Void>> unblockCustomer(@PathVariable UUID userId,
+                                                             @Valid @RequestBody(required = false) UnblockAccountRequestDto request) {
+        adminAccountBlockService.unblock(UserRole.CUSTOMER, userId, request, SecurityUtils.getCurrentUserId());
         return ResponseEntity.ok(ApiResponse.success("Customer access restored successfully"));
     }
 }

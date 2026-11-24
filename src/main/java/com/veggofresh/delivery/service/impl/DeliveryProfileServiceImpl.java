@@ -24,6 +24,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.UUID;
+import com.veggofresh.auth.service.AccountAccessService;
 
 @Service
 @RequiredArgsConstructor
@@ -34,6 +35,7 @@ public class DeliveryProfileServiceImpl implements DeliveryProfileService {
     private final DeliveryOnlineSessionRepository sessionRepository;
     private final UserLookupService userLookupService;
     private final CloudinaryService cloudinaryService;
+    private final AccountAccessService accountAccessService;
 
     @Override
     public DeliveryProfileResponseDto getOrCreateProfile(UUID userId) {
@@ -78,6 +80,11 @@ public class DeliveryProfileServiceImpl implements DeliveryProfileService {
 
         boolean goingOnline = Boolean.TRUE.equals(request.getOnline());
         boolean wasOnline = profile.isOnline();
+
+        // "New work" door of restricted mode: going OFFLINE is always allowed, going online is not while blocked.
+        if (goingOnline) {
+            accountAccessService.requireNotBlocked(userId, "go online");
+        }
 
         profile.setOnline(goingOnline);
         if (request.getCurrentLatitude() != null) profile.setCurrentLatitude(request.getCurrentLatitude());

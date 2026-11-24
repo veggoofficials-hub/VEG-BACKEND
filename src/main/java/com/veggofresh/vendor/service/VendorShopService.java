@@ -22,6 +22,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.Collectors;
+import com.veggofresh.auth.service.AccountAccessService;
 
 /**
  * MODIFIED: registerShop() and submitKycDocuments() removed (see NOTES_VENDOR.md).
@@ -36,6 +37,7 @@ public class VendorShopService {
     private final ShopRepository shopRepository;
     private final UserLookupService userLookupService;
     private final CloudinaryService cloudinaryService;
+    private final AccountAccessService accountAccessService;
 
     @Transactional(readOnly = true)
     public ShopDto getShopByOwner(UUID ownerUserId) {
@@ -57,6 +59,11 @@ public class VendorShopService {
     @Transactional
     public void setShopStatus(UUID ownerUserId, boolean isOnline) {
         Shop shop = requireShop(ownerUserId);
+
+        // "New work" door of restricted mode: going OFFLINE is always allowed, going online is not while blocked.
+        if (isOnline) {
+            accountAccessService.requireNotBlocked(ownerUserId, "go online");
+        }
 
         if (isOnline && shop.getKycStatus() != KycStatus.APPROVED) {
             throw new BusinessException("VENDOR_KYC_NOT_APPROVED", "Cannot go online. KYC is not approved.");

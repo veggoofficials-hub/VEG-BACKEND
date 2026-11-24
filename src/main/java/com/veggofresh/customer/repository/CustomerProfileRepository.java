@@ -17,6 +17,14 @@ public interface CustomerProfileRepository extends JpaRepository<CustomerProfile
     Optional<CustomerProfile> findByUserId(UUID userId);
 
     /**
+     * The profile of this user including a soft-deleted one. Native on purpose: CustomerProfile carries
+     * {@code @Where(deleted_at IS NULL)}, which would otherwise hide the very row the account-deletion
+     * lifecycle (reactivate / purge) has to reach.
+     */
+    @Query(value = "SELECT * FROM customer_profiles WHERE user_id = :userId LIMIT 1", nativeQuery = true)
+    Optional<CustomerProfile> findByUserIdIncludingDeleted(@Param("userId") UUID userId);
+
+    /**
      * Paginated query for Admin Get-All-Customers.
      * Searches across fullName and email stored in the profile table.
      */

@@ -183,4 +183,32 @@ public class Order extends BaseEntity {
     @CollectionTable(name = "order_rejected_shops", joinColumns = @JoinColumn(name = "order_id"))
     @Column(name = "shop_id")
     private Set<UUID> rejectedShopIds = new HashSet<>();
+
+    // ── Order snapshot (migration V177) ─────────────────────────────────────
+    // An order is a photograph of the moment it was placed: these are copied onto the order so a later
+    // rename / deletion / purge of the shop, the product or the customer's account never changes or blanks
+    // a past order. Prices, totals, the delivery address and the rider's details were already frozen.
+    // NULL on orders that pre-date V177 and could not be backfilled; readers fall back to the live lookup.
+
+    /** Customer's display name at checkout. */
+    @Column(name = "customer_name", length = 255)
+    private String customerName;
+
+    /** Customer's phone at checkout. Stored for support / disputes; not returned by the customer or vendor APIs. */
+    @Column(name = "customer_phone", length = 64)
+    private String customerPhone;
+
+    /** The accepting shop's name / address / business phone / owner name, frozen the moment it won the order. */
+    @Column(name = "accepted_shop_name", length = 255)
+    private String acceptedShopName;
+
+    @Column(name = "accepted_shop_address", columnDefinition = "TEXT")
+    private String acceptedShopAddress;
+
+    @Column(name = "accepted_shop_phone", length = 64)
+    private String acceptedShopPhone;
+
+    /** The vendor's own name. Stored for support / disputes; not returned by the customer or vendor APIs. */
+    @Column(name = "accepted_shop_owner_name", length = 255)
+    private String acceptedShopOwnerName;
 }

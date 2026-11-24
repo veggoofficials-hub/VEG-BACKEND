@@ -185,6 +185,12 @@ public class JwtTokenProvider {
      * @param token raw JWT string
      * @return expiration instant
      */
+    /** The token's {@code iat} (second resolution), or {@code null} if the claim is missing. */
+    public Instant extractIssuedAt(String token) {
+        java.util.Date issuedAt = parseClaims(token).getIssuedAt();
+        return issuedAt == null ? null : issuedAt.toInstant();
+    }
+
     public Instant extractExpiry(String token) {
         return parseClaims(token).getExpiration().toInstant();
     }

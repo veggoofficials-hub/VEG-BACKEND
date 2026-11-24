@@ -23,6 +23,37 @@ public interface UserRepository extends JpaRepository<User, UUID> {
     Optional<User> findByPhoneAndRole(String phone, UserRole role);
     Optional<User> findByEmail(String email);
 
+    // ── Account deletion (migration V175) ───────────────────────────────────
+    // The queries below are NATIVE on purpose: User carries @Where(deleted_at IS NULL), which would
+    // otherwise hide exactly the soft-deleted rows these features need to see.
+
+    /** Any account by id -- deleted or not, purged or not. */
+    @Query(value = "SELECT * FROM users WHERE id = :id", nativeQuery = true)
+    Optional<User> findByIdIncludingDeleted(@Param("id") UUID id);
+
+    /**
+     * The most recent SELF-deleted, not-yet-purged account of this phone number in one role -- i.e. the
+     * account a returning person may get back. Rows an admin soft-deleted in the past have no purge_at
+     * and are never returned, so they can never be restored by logging in. A purged row has its phone
+     * scrubbed, so it is never matched either.
+     */
+    @Query(value = "SELECT * FROM users WHERE phone = :phone AND role = :role " +
+                   "AND deleted_at IS NOT NULL AND purge_at IS NOT NULL AND is_purged = FALSE " +
+                   "ORDER BY deleted_at DESC LIMIT 1", nativeQuery = true)
+    Optional<User> findLatestSelfDeletedByPhoneAndRole(@Param("phone") String phone, @Param("role") String role);
+
+    /** Every self-deleted account whose reactivation window has ended and that is not yet scrubbed. */
+    @Query(value = "SELECT * FROM users WHERE deleted_at IS NOT NULL AND is_purged = FALSE " +
+                   "AND purge_at IS NOT NULL AND purge_at <= :now", nativeQuery = true)
+    List<User> findExpiredUnpurgedAccounts(@Param("now") java.time.Instant now);
+
+    /**
+     * Accounts soft-deleted since {@code since}. Feeds the in-memory "logged-out-since" list that lets
+     * the JWT filter refuse the access tokens of a deleted account (see SessionRevocationServiceImpl).
+     */
+    @Query(value = "SELECT * FROM users WHERE deleted_at IS NOT NULL AND deleted_at >= :since", nativeQuery = true)
+    List<User> findDeletedSince(@Param("since") java.time.Instant since);
+
     // ── Admin customer management queries ───────────────────────────────────
 
     /** Paginated list of all customers */

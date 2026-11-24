@@ -15,6 +15,10 @@ import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import com.veggofresh.vendor.dto.request.AccountDeletionRequestDto;
+import com.veggofresh.vendor.service.VendorAccountDeletionService;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 
 @RestController
 @RequestMapping("/api/vendor/account-settings")
@@ -23,6 +27,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class VendorAccountSettingsController {
 
     private final VendorShopService vendorShopService;
+    private final VendorAccountDeletionService vendorAccountDeletionService;
 
     @GetMapping
     public ResponseEntity<ApiResponse<VendorAccountSettingsResponseDto>> getSettings() {
@@ -42,5 +47,16 @@ public class VendorAccountSettingsController {
             @Valid @ModelAttribute VendorAccountSettingsRequestDto request) {
         var settings = vendorShopService.updateAccountSettings(SecurityUtils.getCurrentUserId(), request);
         return ResponseEntity.ok(ApiResponse.success(settings, "Account settings updated successfully"));
+    }
+
+    /**
+     * Self-service account deletion. Refused (409) if the shop has an order still in progress, the wallet
+     * is not zero or a payout is still being processed, and (403) if the account is blocked. No OTP /
+     * password re-verification -- the frontend's confirm dialog is the only gate before this call.
+     */
+    @DeleteMapping
+    public ResponseEntity<ApiResponse<Void>> deleteAccount(@Valid @RequestBody AccountDeletionRequestDto request) {
+        vendorAccountDeletionService.deleteAccount(SecurityUtils.getCurrentUserId(), request);
+        return ResponseEntity.ok(ApiResponse.success("Account deletion request completed successfully"));
     }
 }

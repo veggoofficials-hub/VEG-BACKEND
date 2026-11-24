@@ -74,6 +74,16 @@ public class CustomerOrderServiceImpl implements CustomerOrderService {
             paymentService.onOrderAccepted(orderId);
 
             orderRepository.findById(orderId).ifPresent(order -> {
+                // Order snapshot (V177): freeze the winning shop's details now, so a later rename / deletion
+                // of the shop (or a purge of its owner) never changes this order.
+                shopLookupService.findShopSummaryById(shopId).ifPresent(shop -> {
+                    order.setAcceptedShopName(shop.getName());
+                    order.setAcceptedShopAddress(shop.getAddress());
+                    order.setAcceptedShopPhone(shop.getBusinessPhone());
+                    order.setAcceptedShopOwnerName(shop.getOwnerName());
+                    orderRepository.save(order);
+                });
+
                 notificationService.send(order.getUserId(), NotificationRecipientRole.CUSTOMER, NotificationType.ORDER_CONFIRMED,
                         "Order confirmed", "Your order " + order.getOrderNumber() + " has been confirmed by the shop",
                         orderData(order));
@@ -153,6 +163,14 @@ public class CustomerOrderServiceImpl implements CustomerOrderService {
                     return dto;
                 })
                 .collect(Collectors.toList());
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public boolean hasActiveOrdersForShop(UUID shopId) {
+        return orderRepository.existsByAcceptedShopIdAndStatusIn(shopId,
+                List.of(OrderStatus.CONFIRMED, OrderStatus.PREPARING,
+                        OrderStatus.READY_FOR_PICKUP, OrderStatus.OUT_FOR_DELIVERY));
     }
 
     @Override

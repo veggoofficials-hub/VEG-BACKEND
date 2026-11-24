@@ -21,4 +21,9 @@ public class UserProfileResponseDto {
     private boolean isVerified;
     private boolean isBlocked;
     private Instant createdAt;
+
+    /** Block details, filled only while the account is blocked (restricted mode). */
+    private String blockedReason;
+    private Instant blockedAt;
+    private boolean payoutsOnHold;
 }

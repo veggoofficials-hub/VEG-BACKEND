@@ -10,44 +10,25 @@ import org.springframework.data.domain.Pageable;
 import java.util.UUID;
 
 /**
- * Admin module service for customer management.
- * Serves the "Customer Management" section of the admin panel:
- *  - Customer Base dashboard (View Customers)
- *  - Moderation Center (Block / Unblock Accounts)
+ * Admin customer screens.
+ *
+ * <p>There is deliberately NO admin delete: accounts are only ever deleted by their owner (see
+ * CustomerAccountDeletionService). Blocking and unblocking -- for customers, vendors and delivery
+ * partners alike -- lives in {@link AdminAccountBlockService}.
  */
 public interface AdminCustomerService {
 
     // ── Customer Base (View Customers screen) ───────────────────────────────
 
-    /** 4 header stat cards on the Customer Base page */
     CustomerBaseStatsDto getCustomerBaseStats();
 
-    /**
-     * Registered Customer Ledger — paginated list with optional search.
-     * @param search optional search string matched against name, email, or CUST-ID
-     */
     Page<AdminCustomerLedgerDto> getCustomerLedger(String search, Pageable pageable);
 
-    /** Single customer detail view (eye icon action) */
     AdminCustomerLedgerDto getCustomerById(UUID userId);
-
-    /** Soft-delete a customer account (delete icon action) */
-    void deleteCustomer(UUID userId);
 
     // ── Moderation Center (Block / Unblock Accounts screen) ─────────────────
 
-    /** 3 header stat cards on the Moderation Center page */
     ModerationStatsDto getModerationStats();
 
-    /**
-     * User Moderation Ledger — paginated list with flags and infractions.
-     * @param search optional search string
-     */
     Page<ModerationLedgerRowDto> getModerationLedger(String search, Pageable pageable);
-
-    /** Block a customer account (Block Account action) */
-    void blockCustomer(UUID userId);
-
-    /** Unblock/restore a customer account (Restore Access action) */
-    void unblockCustomer(UUID userId);
 }

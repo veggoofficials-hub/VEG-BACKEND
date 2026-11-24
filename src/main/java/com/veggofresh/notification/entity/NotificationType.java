@@ -39,6 +39,8 @@ public enum NotificationType {
 
     // â”€â”€ Admin â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     ADMIN_ANNOUNCEMENT,
+    ACCOUNT_BLOCKED,            // any role: an admin blocked the account (restricted mode); reason in the body
+    ACCOUNT_UNBLOCKED,          // any role: the block was lifted (optional admin note in the body)
 
     // â”€â”€ Complaint lifecycle â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     COMPLAINT_REGISTERED,

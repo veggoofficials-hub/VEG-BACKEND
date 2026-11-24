@@ -24,6 +24,7 @@ import java.math.BigDecimal;
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.Collectors;
+import com.veggofresh.auth.service.AccountAccessService;
 
 /**
  * REBUILT THIS ROUND -- the vendor-accept/reject broadcast redesign, matching
@@ -49,6 +50,7 @@ public class VendorOrderManagementService {
     private final DeliveryDispatchService deliveryDispatchService;
     private final DeliveryPickupInfoService deliveryPickupInfoService;
     private final PlatformSettingsService platformSettingsService;
+    private final AccountAccessService accountAccessService;
 
     /**
      * NEW THIS ROUND -- the broadcast inbox. Every order still awaiting a decision
@@ -217,6 +219,8 @@ public class VendorOrderManagementService {
      */
     @Transactional
     public void acceptOrder(UUID ownerUserId, UUID orderId) {
+        // "New work" door of restricted mode: a blocked vendor can still finish accepted orders, not take new ones.
+        accountAccessService.requireNotBlocked(ownerUserId, "accept new orders");
         Shop shop = requireShop(ownerUserId);
         customerOrderService.acceptOrder(orderId, shop.getId());
     }

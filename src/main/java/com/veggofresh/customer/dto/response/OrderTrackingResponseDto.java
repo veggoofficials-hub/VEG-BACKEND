@@ -26,6 +26,7 @@ public class OrderTrackingResponseDto {
     /** Null until a shop has accepted this order -- see OrderServiceImpl.trackOrder(). */
     private String shopName;
     private String shopBusinessPhone;
+    private String shopAddress;
 
     private String deliveryAgentName;
     private String deliveryAgentPhone;

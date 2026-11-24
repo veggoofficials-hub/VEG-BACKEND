@@ -95,4 +95,14 @@ public class AdminDeliveryPartnerDto {
 
     /** Number of complaints filed by this delivery partner. */
     private long totalComplaints;
+
+    /** Block details -- filled only while the account is blocked. */
+    private String blockedReason;
+    private Instant blockedAt;
+    private boolean payoutsOnHold;
+
+    /** The same phone + role was self-deleted before (a returning user). */
+    private boolean previouslyDeleted;
+    private int previousDeletionCount;
+    private Instant lastDeletedAt;
 }

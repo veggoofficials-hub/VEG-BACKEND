@@ -83,6 +83,7 @@ public class AdminUserListServiceImpl implements AdminUserListService {
     private final ComplaintRepository complaintRepository;
     private final VendorListingRepository vendorListingRepository;
     private final DeliveryAssignmentRepository deliveryAssignmentRepository;
+    private final PreviousDeletionLookup previousDeletionLookup;
 
     // ─────────────────────────────────────────────────────────────────────────
     // VENDORS
@@ -492,7 +493,14 @@ public class AdminUserListServiceImpl implements AdminUserListService {
     }
 
     private AdminVendorDto toVendorDto(Shop shop, User user, long orders, long listings, long complaints) {
+        PreviousDeletionLookup.Info prev = previousDeletionLookup.forPhone(user != null ? user.getPhone() : null, "VENDOR");
         return AdminVendorDto.builder()
+                .blockedReason(user != null && user.isBlocked() ? user.getBlockedReason() : null)
+                .blockedAt(user != null && user.isBlocked() ? user.getBlockedAt() : null)
+                .payoutsOnHold(user != null && user.isBlocked() && user.isPayoutsOnHold())
+                .previouslyDeleted(prev.previouslyDeleted())
+                .previousDeletionCount(prev.count())
+                .lastDeletedAt(prev.lastDeletedAt())
                 .shopId(shop.getId())
                 .userId(shop.getOwnerUserId())
                 .shopName(shop.getName())
@@ -526,7 +534,14 @@ public class AdminUserListServiceImpl implements AdminUserListService {
         boolean verified = user != null && user.isVerified();
         String state = blocked ? "Blocked" : (!verified ? "Unverified" : "Active");
 
+        PreviousDeletionLookup.Info prev = previousDeletionLookup.forPhone(user != null ? user.getPhone() : null, "CUSTOMER");
         return AdminCustomerDto.builder()
+                .blockedReason(blocked ? user.getBlockedReason() : null)
+                .blockedAt(blocked ? user.getBlockedAt() : null)
+                .payoutsOnHold(blocked && user.isPayoutsOnHold())
+                .previouslyDeleted(prev.previouslyDeleted())
+                .previousDeletionCount(prev.count())
+                .lastDeletedAt(prev.lastDeletedAt())
                 .profileId(profile != null ? profile.getId() : null)
                 .userId(user != null ? user.getId() : null)
                 .fullName(name)
@@ -573,7 +588,14 @@ public class AdminUserListServiceImpl implements AdminUserListService {
         boolean blocked = user != null && user.isBlocked();
         boolean verified = user != null && user.isVerified();
 
+        PreviousDeletionLookup.Info prev = previousDeletionLookup.forPhone(user != null ? user.getPhone() : null, "DELIVERY");
         return AdminDeliveryPartnerDto.builder()
+                .blockedReason(blocked ? user.getBlockedReason() : null)
+                .blockedAt(blocked ? user.getBlockedAt() : null)
+                .payoutsOnHold(blocked && user.isPayoutsOnHold())
+                .previouslyDeleted(prev.previouslyDeleted())
+                .previousDeletionCount(prev.count())
+                .lastDeletedAt(prev.lastDeletedAt())
                 .profileId(dp.getId())
                 .userId(dp.getUserId())
                 .fullName(dp.getFullName())

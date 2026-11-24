@@ -86,6 +86,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
+import com.veggofresh.auth.service.AccountAccessService;
 
 /**
  * PHASE 2 — NEW ARCHITECTURE, multi-cart / one-payment-to-N-orders checkout
@@ -145,6 +146,7 @@ public class OrderServiceImpl implements OrderService, PaymentAuthorizedHandler 
     private final PlatformSettingsService platformSettingsService;
     private final CartVendorResolver cartVendorResolver;
     private final CouponCheckoutService couponService;
+    private final AccountAccessService accountAccessService;
     /** Writes and reads the {@link CheckoutSnapshot} stored next to the payment. */
     private final ObjectMapper objectMapper;
 
@@ -163,6 +165,10 @@ public class OrderServiceImpl implements OrderService, PaymentAuthorizedHandler 
      */
     @Override
     public CheckoutResultDto checkout(UUID userId, OrderRequestDto request) {
+        // "New work" door of restricted mode: a blocked customer can finish the orders already in progress
+        // but cannot place new ones (online or COD).
+        accountAccessService.requireNotBlocked(userId, "place new orders");
+
         // How the customer pays decides the rest of this method. Read (and validated) first, so an unsupported
         // method is rejected before anything is priced.
         final PaymentMode paymentMode = PaymentMode.fromLabel(request.getPaymentMethodId());
@@ -659,6 +665,15 @@ public class OrderServiceImpl implements OrderService, PaymentAuthorizedHandler 
         order.setSourceCartId(cart.getId());
         order.setCandidateVendorIds(new HashSet<>(resolvedVendorIds));
 
+        // Order snapshot (V177): freeze who ordered, exactly as they are right now.
+        order.setCustomerName(customerProfileRepository.findByUserId(userId)
+                .map(CustomerProfile::getFullName)
+                .filter(n -> n != null && !n.isBlank())
+                .orElse(null));
+        order.setCustomerPhone(userLookupService.findById(userId)
+                .map(UserSummaryDto::getPhone)
+                .orElse(null));
+
         BigDecimal subtotal = BigDecimal.ZERO;
         List<OrderItem> orderItems = new ArrayList<>();
 
@@ -687,6 +702,9 @@ public class OrderServiceImpl implements OrderService, PaymentAuthorizedHandler 
             orderItem.setVendorUnitPrice(vendorPrice == null || vendorPrice.compareTo(product.getPrice()) > 0
                     ? product.getPrice() : vendorPrice);
             orderItem.setUnit(product.getUnit());
+            // Order snapshot (V177): the product's name and image as they are right now.
+            orderItem.setProductName(product.getName());
+            orderItem.setProductImageUrl(product.getImageUrl());
             orderItems.add(orderItem);
 
             subtotal = subtotal.add(product.getPrice().multiply(BigDecimal.valueOf(item.getQuantity())));
@@ -897,13 +915,17 @@ public class OrderServiceImpl implements OrderService, PaymentAuthorizedHandler 
         // number) whenever no real partner had been assigned yet -- that
         // fabricated a delivery person who doesn't exist. Now both stay null
         // until a real partner accepts, same as everywhere else.
-        String shopName = null;
-        String shopBusinessPhone = null;
-        if (order.getAcceptedShopId() != null) {
+        // Frozen when the shop accepted (V177), so a later rename / deletion of the shop cannot change a past
+        // order. Orders accepted before the snapshot existed fall back to the live lookup.
+        String shopName = order.getAcceptedShopName();
+        String shopBusinessPhone = order.getAcceptedShopPhone();
+        String shopAddress = order.getAcceptedShopAddress();
+        if (order.getAcceptedShopId() != null && shopName == null) {
             var shop = shopLookupService.findShopSummaryById(order.getAcceptedShopId()).orElse(null);
             if (shop != null) {
                 shopName = shop.getName();
                 shopBusinessPhone = shop.getBusinessPhone();
+                shopAddress = shop.getAddress();
             }
         }
 
@@ -918,6 +940,7 @@ public class OrderServiceImpl implements OrderService, PaymentAuthorizedHandler 
                 .currentLongitude(order.getLongitude() - 0.001)
                 .shopName(shopName)
                 .shopBusinessPhone(shopBusinessPhone)
+                .shopAddress(shopAddress)
                 .deliveryAgentName(order.getDeliveryAgentName())
                 .deliveryAgentPhone(order.getDeliveryAgentPhone())
                 .deliveryAgentPhotoUrl(order.getDeliveryAgentPhotoUrl())
@@ -1208,16 +1231,20 @@ public class OrderServiceImpl implements OrderService, PaymentAuthorizedHandler 
         // PHASE 1 FIX: use the customer's real display name — CustomerProfile
         // .fullName was already being stored via the profile endpoints but
         // never actually read here; this used to fall straight to phone.
-        String customerName = customerProfileRepository.findByUserId(userId)
-                .map(CustomerProfile::getFullName)
-                .filter(name -> name != null && !name.isBlank())
-                .orElse(user.getPhone());
+        // Order snapshot (V177) first; the live profile only for orders that pre-date it.
+        String customerName = (order.getCustomerName() != null && !order.getCustomerName().isBlank())
+                ? order.getCustomerName()
+                : customerProfileRepository.findByUserId(userId)
+                        .map(CustomerProfile::getFullName)
+                        .filter(name -> name != null && !name.isBlank())
+                        .orElse(user.getPhone());
 
         CartVendorResolver.Session invoiceVendors = itemSession(order);
         List<InvoiceLineItemDto> lineItems = order.getItems().stream()
                 .map(item -> {
-                    ProductDto product = safeGetProduct(item.getProductId(), invoiceVendors);
-                    String name = product != null ? product.getName() : "Unknown Product";
+                    ProductDto product = item.getProductName() != null ? null : safeGetProduct(item.getProductId(), invoiceVendors);
+                    String name = item.getProductName() != null ? item.getProductName()
+                            : (product != null ? product.getName() : "Unknown Product");
                     return InvoiceLineItemDto.builder()
                             .productName(name)
                             .quantity(item.getQuantity())
@@ -1233,9 +1260,10 @@ public class OrderServiceImpl implements OrderService, PaymentAuthorizedHandler 
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
         // Seller of record -- null until a shop has accepted this order.
-        String shopName = null;
-        String shopAddress = null;
-        if (order.getAcceptedShopId() != null) {
+        // Frozen when the shop accepted (V177); orders accepted before that fall back to the live lookup.
+        String shopName = order.getAcceptedShopName();
+        String shopAddress = order.getAcceptedShopAddress();
+        if (order.getAcceptedShopId() != null && shopName == null) {
             var shop = shopLookupService.findShopSummaryById(order.getAcceptedShopId()).orElse(null);
             if (shop != null) {
                 shopName = shop.getName();
@@ -1248,7 +1276,7 @@ public class OrderServiceImpl implements OrderService, PaymentAuthorizedHandler 
                 .orderDate(order.getCreatedAt().toString())
                 .customerName(customerName)
                 .customerEmail(user.getEmail())
-                .customerPhone(user.getPhone())
+                .customerPhone(order.getCustomerPhone() != null ? order.getCustomerPhone() : user.getPhone())
                 .shopName(shopName)
                 .shopAddress(shopAddress)
                 .deliveryAddress(order.getDeliveryAddress())

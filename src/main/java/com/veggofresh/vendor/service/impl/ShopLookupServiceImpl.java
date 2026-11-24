@@ -36,6 +36,7 @@ public class ShopLookupServiceImpl implements ShopLookupService {
                         .name(shop.getName())
                         .businessPhone(shop.getBusinessPhone())
                         .address(shop.getAddress())
+                        .ownerName(shop.getFullName())
                         .build());
     }
 
@@ -47,6 +48,7 @@ public class ShopLookupServiceImpl implements ShopLookupService {
                         .name(shop.getName())
                         .businessPhone(shop.getBusinessPhone())
                         .address(shop.getAddress())
+                        .ownerName(shop.getFullName())
                         .build());
     }
 }

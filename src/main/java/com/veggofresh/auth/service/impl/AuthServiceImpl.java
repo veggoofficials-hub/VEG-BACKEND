@@ -30,6 +30,8 @@ import java.util.List;
 import java.util.Random;
 import java.util.Set;
 import java.util.UUID;
+import com.veggofresh.auth.service.UserAccountService;
+import java.util.Optional;
 
 @Slf4j
 @Service
@@ -42,6 +44,7 @@ public class AuthServiceImpl implements AuthService {
     private final RefreshTokenRepository refreshTokenRepository;
     private final JwtTokenProvider jwtTokenProvider;
     private final FirebaseAuthService firebaseAuthService;
+    private final UserAccountService userAccountService;
 
     private static final int OTP_EXPIRY_MINUTES = 5;
     private static final int MAX_OTP_ATTEMPTS = 5;
@@ -118,12 +121,9 @@ public class AuthServiceImpl implements AuthService {
             otpVerificationRepository.save(verification);
         }
 
-        // Find (or create) the account of THIS phone number in THIS role.
+        // Find (or restore, or create) the account of THIS phone number in THIS role.
+        // A BLOCKED account still logs in: it is "restricted mode" -- see AccountAccessService.
         User user = findOrCreateUser(phone, request.getRole());
-
-        if (user.isBlocked()) {
-            throw new BusinessException("AUTH_USER_BLOCKED", "User account is blocked", HttpStatus.FORBIDDEN);
-        }
 
         if (!user.isVerified()) {
             user.setVerified(true);
@@ -140,12 +140,9 @@ public class AuthServiceImpl implements AuthService {
         // Verify Firebase ID token and extract phone number (Firebase has already validated the SMS OTP).
         String phone = firebaseAuthService.getVerifiedPhone(request.getIdToken());
 
-        // Find (or create) the account of this verified phone number in the requested role.
+        // Find (or restore, or create) the account of this verified phone number in the requested role.
+        // A BLOCKED account still logs in: it is "restricted mode" -- see AccountAccessService.
         User user = findOrCreateUser(phone, request.getRole());
-
-        if (user.isBlocked()) {
-            throw new BusinessException("AUTH_USER_BLOCKED", "User account is blocked", HttpStatus.FORBIDDEN);
-        }
 
         if (!user.isVerified()) {
             user.setVerified(true);
@@ -181,9 +178,7 @@ public class AuthServiceImpl implements AuthService {
         User user = userRepository.findById(refreshToken.getUserId())
                 .orElseThrow(() -> new BusinessException("AUTH_USER_NOT_FOUND", "User not found"));
 
-        if (user.isBlocked()) {
-            throw new BusinessException("AUTH_USER_BLOCKED", "User account is blocked", HttpStatus.FORBIDDEN);
-        }
+        // A blocked account may keep refreshing: it is in "restricted mode", not locked out.
 
         // Rotate refresh token for better security
         refreshToken.setRevoked(true);
@@ -219,6 +214,9 @@ public class AuthServiceImpl implements AuthService {
                 .isVerified(user.isVerified())
                 .isBlocked(user.isBlocked())
                 .createdAt(user.getCreatedAt())
+                .blockedReason(user.isBlocked() ? user.getBlockedReason() : null)
+                .blockedAt(user.isBlocked() ? user.getBlockedAt() : null)
+                .payoutsOnHold(user.isBlocked() && user.isPayoutsOnHold())
                 .build();
     }
 
@@ -237,13 +235,24 @@ public class AuthServiceImpl implements AuthService {
      * always matches the app that is logging in.
      */
     private User findOrCreateUser(String phone, UserRole role) {
-        return userRepository.findByPhoneAndRole(phone, role).orElseGet(() -> {
-            User newUser = new User();
-            newUser.setPhone(phone);
-            newUser.setRole(role);
-            newUser.setVerified(true);
-            return userRepository.save(newUser);
-        });
+        Optional<User> active = userRepository.findByPhoneAndRole(phone, role);
+        if (active.isPresent()) {
+            return active.get();
+        }
+
+        // No active account. If this person deleted their own account and is still inside the window they
+        // chose, logging in brings it back (same user id, same history). Past the window -- or for an
+        // account an admin removed -- nothing is restored and a brand-new account is created below.
+        Optional<User> restored = userAccountService.reactivateIfWithinWindow(phone, role);
+        if (restored.isPresent()) {
+            return restored.get();
+        }
+
+        User newUser = new User();
+        newUser.setPhone(phone);
+        newUser.setRole(role);
+        newUser.setVerified(true);
+        return userRepository.save(newUser);
     }
 
     private AuthTokenResponseDto generateTokens(User user) {
@@ -260,6 +269,10 @@ public class AuthServiceImpl implements AuthService {
         return AuthTokenResponseDto.builder()
                 .accessToken(accessTokenStr)
                 .refreshToken(refreshTokenStr)
+                .restricted(user.isBlocked())
+                .blockedReason(user.isBlocked() ? user.getBlockedReason() : null)
+                .blockedAt(user.isBlocked() ? user.getBlockedAt() : null)
+                .payoutsOnHold(user.isBlocked() && user.isPayoutsOnHold())
                 .build();
     }
 }

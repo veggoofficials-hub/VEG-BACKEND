@@ -74,6 +74,8 @@ public class OrderResponseDto {
      */
     private String shopName;
     private String shopBusinessPhone;
+    /** Shop address as it was when the shop accepted the order (frozen -- see Order.acceptedShopAddress). */
+    private String shopAddress;
 
     /**
      * Delivery partner identity -- null until a partner has accepted the

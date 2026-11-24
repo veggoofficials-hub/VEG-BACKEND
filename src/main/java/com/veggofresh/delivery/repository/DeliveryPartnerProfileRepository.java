@@ -16,6 +16,14 @@ import java.util.UUID;
 @Repository
 public interface DeliveryPartnerProfileRepository extends JpaRepository<DeliveryPartnerProfile, UUID> {
     Optional<DeliveryPartnerProfile> findByUserId(UUID userId);
+
+    /**
+     * The profile of this user including a soft-deleted one. Native on purpose: the entity carries
+     * {@code @Where(deleted_at IS NULL)}, which would otherwise hide the very row the account-deletion
+     * lifecycle (reactivate / purge) has to reach.
+     */
+    @Query(value = "SELECT * FROM delivery_partners WHERE user_id = :userId LIMIT 1", nativeQuery = true)
+    Optional<DeliveryPartnerProfile> findByUserIdIncludingDeleted(@Param("userId") UUID userId);
     List<DeliveryPartnerProfile> findByOnlineTrueAndKycStatus(DeliveryKycStatus kycStatus);
 
     /**

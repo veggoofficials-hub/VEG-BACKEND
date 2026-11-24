@@ -80,4 +80,14 @@ public class AdminVendorDto {
 
     /** Number of complaints filed against or by this vendor. */
     private long totalComplaints;
+
+    /** Block details -- filled only while the account is blocked. */
+    private String blockedReason;
+    private Instant blockedAt;
+    private boolean payoutsOnHold;
+
+    /** The same phone + role was self-deleted before (a returning user). */
+    private boolean previouslyDeleted;
+    private int previousDeletionCount;
+    private Instant lastDeletedAt;
 }

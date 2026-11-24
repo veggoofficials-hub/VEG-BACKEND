@@ -18,6 +18,9 @@ public interface PayoutRequestRepository extends JpaRepository<PayoutRequest, UU
 
     java.util.Optional<PayoutRequest> findByRazorpayPayoutId(String razorpayPayoutId);
 
+    /** True if this user has a payout request in any of the given statuses (account-deletion pre-check). */
+    boolean existsByUserIdAndStatusIn(UUID userId, java.util.Collection<PayoutRequestStatus> statuses);
+
     /**
      * How many of a user's payout requests are in the given status. Used to refuse a bank-account change while
      * payouts are still PENDING: those read the bank details only when an admin approves them, so changing the

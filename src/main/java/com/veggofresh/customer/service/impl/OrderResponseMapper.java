@@ -54,8 +54,10 @@ public class OrderResponseMapper {
 
         List<OrderItemResponseDto> itemDtos = order.getItems().stream()
                 .map(item -> {
-                    ProductResponseDto product = safeGetProduct(item.getProductId());
-                    String name = product != null ? product.getName() : "Unknown Product";
+                    // Order snapshot (V177): the name frozen at checkout; the live catalog only for older orders.
+                    ProductResponseDto product = item.getProductName() != null ? null : safeGetProduct(item.getProductId());
+                    String name = item.getProductName() != null ? item.getProductName()
+                            : (product != null ? product.getName() : "Unknown Product");
                     return OrderItemResponseDto.builder()
                             .id(item.getId())
                             .productId(item.getProductId())
@@ -70,9 +72,14 @@ public class OrderResponseMapper {
                 .collect(Collectors.toList());
 
         List<String> itemThumbnails = order.getItems().stream()
-                .map(item -> safeGetProduct(item.getProductId()))
-                .filter(p -> p != null && p.getImageUrl() != null)
-                .map(ProductResponseDto::getImageUrl)
+                .map(item -> {
+                    if (item.getProductImageUrl() != null) {
+                        return item.getProductImageUrl();
+                    }
+                    ProductResponseDto p = safeGetProduct(item.getProductId());
+                    return p != null ? p.getImageUrl() : null;
+                })
+                .filter(url -> url != null)
                 .limit(3)
                 .collect(Collectors.toList());
 
@@ -80,23 +87,30 @@ public class OrderResponseMapper {
         // regardless of who ends up viewing this DTO (Customer sees their own
         // name; Vendor/Delivery gate whether they expose it, not whether it's
         // computed).
-        String customerName = customerProfileRepository.findByUserId(order.getUserId())
-                .map(CustomerProfile::getFullName)
-                .filter(name -> name != null && !name.isBlank())
-                .orElseGet(() -> userLookupService.findById(order.getUserId())
-                        .map(UserSummaryDto::getPhone)
-                        .orElse(null));
+        // Order snapshot (V177) first, so a purged / renamed customer never changes a past order.
+        String customerName = (order.getCustomerName() != null && !order.getCustomerName().isBlank())
+                ? order.getCustomerName()
+                : customerProfileRepository.findByUserId(order.getUserId())
+                        .map(CustomerProfile::getFullName)
+                        .filter(name -> name != null && !name.isBlank())
+                        .orElseGet(() -> userLookupService.findById(order.getUserId())
+                                .map(UserSummaryDto::getPhone)
+                                .orElse(null));
 
         // Vendor identity -- only resolvable once a shop has actually won the
         // order (acceptedShopId set). Left null before that so nobody -- not
         // even the customer's own view -- sees vendor identity pre-acceptance.
-        String shopName = null;
-        String shopBusinessPhone = null;
-        if (order.getAcceptedShopId() != null) {
+        // Frozen when the shop accepted (V177): a later rename or deletion of the shop must not change a past
+        // order. Orders accepted before the snapshot existed fall back to the live lookup.
+        String shopName = order.getAcceptedShopName();
+        String shopBusinessPhone = order.getAcceptedShopPhone();
+        String shopAddress = order.getAcceptedShopAddress();
+        if (order.getAcceptedShopId() != null && shopName == null) {
             ShopSummaryDto shop = shopLookupService.findShopSummaryById(order.getAcceptedShopId()).orElse(null);
             if (shop != null) {
                 shopName = shop.getName();
                 shopBusinessPhone = shop.getBusinessPhone();
+                shopAddress = shop.getAddress();
             }
         }
 
@@ -135,6 +149,7 @@ public class OrderResponseMapper {
                 .customerName(customerName)
                 .shopName(shopName)
                 .shopBusinessPhone(shopBusinessPhone)
+                .shopAddress(shopAddress)
                 // Delivery agent fields already exist on the Order entity and are
                 // only ever set once a delivery partner accepts the dispatched
                 // assignment (see CustomerOrderService.assignDeliveryAgent) --

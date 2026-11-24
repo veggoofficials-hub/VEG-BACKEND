@@ -16,6 +16,15 @@ import java.util.UUID;
 @Repository
 public interface ShopRepository extends JpaRepository<Shop, UUID> {
     Optional<Shop> findByOwnerUserIdAndDeletedAtIsNull(UUID ownerUserId);
+
+    /**
+     * The shop of this owner including a soft-deleted one. Native on purpose: {@link Shop} carries
+     * {@code @Where(deleted_at IS NULL)}, which would otherwise hide the very row the account-deletion
+     * lifecycle (reactivate / purge) has to reach.
+     */
+    @Query(value = "SELECT * FROM vendor_shops WHERE owner_user_id = :ownerUserId ORDER BY created_at DESC LIMIT 1",
+           nativeQuery = true)
+    Optional<Shop> findByOwnerUserIdIncludingDeleted(@Param("ownerUserId") UUID ownerUserId);
     Optional<Shop> findByIdAndDeletedAtIsNull(UUID id);
     List<Shop> findAllByDeletedAtIsNullAndIsOnlineTrueAndKycStatus(KycStatus kycStatus);
 

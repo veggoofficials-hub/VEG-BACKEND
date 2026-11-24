@@ -51,4 +51,11 @@ public class OrderItem extends BaseEntity {
      */
     @Column(length = 100)
     private String unit;
+
+    /** Product name and image as they were at checkout (migration V177) -- NOT a live lookup. */
+    @Column(name = "product_name", length = 255)
+    private String productName;
+
+    @Column(name = "product_image_url", length = 1000)
+    private String productImageUrl;
 }

@@ -40,6 +40,9 @@ public interface DeliveryAssignmentRepository extends JpaRepository<DeliveryAssi
     /** Count deliveries completed by a specific partner — used in admin count summaries. */
     long countByDeliveryPartnerUserIdAndStatus(UUID deliveryPartnerUserId, DeliveryAssignmentStatus status);
 
+    /** True if this partner has an assignment in any of the given statuses (account-deletion pre-check). */
+    boolean existsByDeliveryPartnerUserIdAndStatusIn(UUID deliveryPartnerUserId, Collection<DeliveryAssignmentStatus> statuses);
+
     /** Batch completed delivery counts grouped by partner user ID. */
     @Query("SELECT a.deliveryPartnerUserId, COUNT(a) FROM DeliveryAssignment a WHERE a.deliveryPartnerUserId IN :partnerUserIds AND a.status = :status GROUP BY a.deliveryPartnerUserId")
     List<Object[]> countGroupedByPartnerUserIdInAndStatus(@Param("partnerUserIds") Collection<UUID> partnerUserIds, @Param("status") DeliveryAssignmentStatus status);

@@ -50,6 +50,7 @@ import java.util.Objects;
 import java.util.Random;
 import java.util.UUID;
 import java.util.stream.Collectors;
+import com.veggofresh.auth.service.AccountAccessService;
 
 /**
  * REBUILT THIS ROUND -- real atomic accept, real radius-enforced
@@ -96,6 +97,7 @@ public class DeliveryAssignmentServiceImpl implements DeliveryAssignmentService 
     private final OrderRepository orderRepository;
     private final PaymentService paymentService;
     private final ShopLookupService shopLookupService;
+    private final AccountAccessService accountAccessService;
 
     @Override
     @Transactional(readOnly = true)
@@ -117,6 +119,8 @@ public class DeliveryAssignmentServiceImpl implements DeliveryAssignmentService 
 
     @Override
     public DeliveryAssignmentResponseDto acceptAssignment(UUID deliveryPartnerUserId, UUID orderId) {
+        // "New work" door of restricted mode: a blocked partner can finish the delivery in hand, not take new ones.
+        accountAccessService.requireNotBlocked(deliveryPartnerUserId, "accept new deliveries");
         DeliveryPartnerProfile partner = requireApprovedPartner(deliveryPartnerUserId);
 
         DeliveryAssignment assignment = findByOrderAndStatus(orderId, DeliveryAssignmentStatus.PENDING,

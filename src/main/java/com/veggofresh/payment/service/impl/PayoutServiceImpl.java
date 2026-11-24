@@ -40,6 +40,7 @@ import java.util.Objects;
 import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
+import com.veggofresh.auth.service.AccountAccessService;
 
 @Slf4j
 @Service
@@ -57,9 +58,13 @@ public class PayoutServiceImpl implements PayoutService {
     // Option B: direct cross-module repository injection
     private final DeliveryPartnerProfileRepository deliveryPartnerProfileRepository;
     private final ShopRepository shopRepository;
+    private final AccountAccessService accountAccessService;
 
     @Override
     public PayoutResponseDto requestPayout(UUID userId, String userRole, PayoutRequestCreateDto dto) {
+        // Restricted mode: payouts stay available unless the admin ticked "hold payouts" when blocking.
+        accountAccessService.requirePayoutsNotOnHold(userId);
+
         if (dto.getAmount() == null || dto.getAmount().compareTo(BigDecimal.ONE) < 0) {
             throw new BusinessException("INVALID_PAYOUT_AMOUNT", "Payout amount must be at least 1.00",
                     HttpStatus.BAD_REQUEST);

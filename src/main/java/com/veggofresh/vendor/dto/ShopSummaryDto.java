@@ -19,4 +19,6 @@ public class ShopSummaryDto {
     private String name;
     private String businessPhone;
     private String address;
+    /** The owner's own name. Used only to freeze it onto an accepted order (see Order.acceptedShopOwnerName). */
+    private String ownerName;
 }

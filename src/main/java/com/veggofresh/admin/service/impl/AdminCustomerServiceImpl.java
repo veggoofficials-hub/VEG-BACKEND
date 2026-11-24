@@ -5,8 +5,11 @@ import com.veggofresh.admin.dto.CustomerBaseStatsDto;
 import com.veggofresh.admin.dto.ModerationLedgerRowDto;
 import com.veggofresh.admin.dto.ModerationStatsDto;
 import com.veggofresh.admin.service.AdminCustomerService;
+import com.veggofresh.auth.entity.AccountBlockLog;
+import com.veggofresh.auth.entity.BlockAction;
 import com.veggofresh.auth.entity.User;
 import com.veggofresh.auth.entity.UserRole;
+import com.veggofresh.auth.repository.AccountBlockLogRepository;
 import com.veggofresh.auth.repository.UserRepository;
 import com.veggofresh.customer.entity.CustomerProfile;
 import com.veggofresh.customer.entity.OrderStatus;
@@ -21,7 +24,11 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
-import java.time.Instant;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 @Service
@@ -29,9 +36,13 @@ import java.util.UUID;
 @Transactional
 public class AdminCustomerServiceImpl implements AdminCustomerService {
 
+    private static final DateTimeFormatter DAY = DateTimeFormatter.ofPattern("yyyy-MM-dd").withZone(ZoneOffset.UTC);
+
     private final UserRepository userRepository;
     private final CustomerProfileRepository customerProfileRepository;
     private final OrderRepository orderRepository;
+    private final AccountBlockLogRepository accountBlockLogRepository;
+    private final PreviousDeletionLookup previousDeletionLookup;
 
     // ── CUSTOMER BASE STATS ──────────────────────────────────────────────────
 
@@ -81,14 +92,6 @@ public class AdminCustomerServiceImpl implements AdminCustomerService {
         return mapToLedgerDto(user);
     }
 
-    @Override
-    public void deleteCustomer(UUID userId) {
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new BusinessException("ADMIN_CUSTOMER_NOT_FOUND", "Customer not found", HttpStatus.NOT_FOUND));
-        user.softDelete();
-        userRepository.save(user);
-    }
-
     // ── MODERATION STATS ─────────────────────────────────────────────────────
 
     @Override
@@ -97,8 +100,8 @@ public class AdminCustomerServiceImpl implements AdminCustomerService {
         long blocked = userRepository.countByRoleAndIsBlocked(UserRole.CUSTOMER, true);
         long total = userRepository.countByRole(UserRole.CUSTOMER);
         long unrestricted = total - blocked;
-        // Flagged = accounts with flags raised > 0 but not blocked (approximation via cancelled orders)
-        long flagged = Math.max(0, unrestricted / 10); // stub until flag entity is added
+        // Flagged warnings = customers an admin has blocked before who are active again now.
+        long flagged = accountBlockLogRepository.countPreviouslyBlockedNowActive(UserRole.CUSTOMER.name(), BlockAction.BLOCK);
 
         return ModerationStatsDto.builder()
                 .unrestrictedUsers(unrestricted)
@@ -118,35 +121,24 @@ public class AdminCustomerServiceImpl implements AdminCustomerService {
         } else {
             users = userRepository.findByRole(UserRole.CUSTOMER, pageable);
         }
-        return users.map(this::mapToModerationRow);
-    }
 
-    // ── BLOCK / UNBLOCK ──────────────────────────────────────────────────────
-
-    @Override
-    public void blockCustomer(UUID userId) {
-        User user = getCustomerUser(userId);
-        user.setBlocked(true);
-        userRepository.save(user);
-    }
-
-    @Override
-    public void unblockCustomer(UUID userId) {
-        User user = getCustomerUser(userId);
-        user.setBlocked(false);
-        userRepository.save(user);
+        // Real block data for the whole page in two queries (not one per row).
+        List<UUID> ids = users.getContent().stream().map(User::getId).toList();
+        Map<UUID, Long> blockCounts = new HashMap<>();
+        Map<UUID, AccountBlockLog> latestBlock = new HashMap<>();
+        if (!ids.isEmpty()) {
+            for (Object[] row : accountBlockLogRepository.countByUserIds(ids, BlockAction.BLOCK)) {
+                blockCounts.put((UUID) row[0], (Long) row[1]);
+            }
+            // newest first, so the first one seen per user is the latest block
+            for (AccountBlockLog entry : accountBlockLogRepository.findByUserIdsAndAction(ids, BlockAction.BLOCK)) {
+                latestBlock.putIfAbsent(entry.getUserId(), entry);
+            }
+        }
+        return users.map(u -> mapToModerationRow(u, blockCounts, latestBlock));
     }
 
     // ── PRIVATE HELPERS ──────────────────────────────────────────────────────
-
-    private User getCustomerUser(UUID userId) {
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new BusinessException("ADMIN_CUSTOMER_NOT_FOUND", "Customer not found", HttpStatus.NOT_FOUND));
-        if (user.getRole() != UserRole.CUSTOMER) {
-            throw new BusinessException("ADMIN_CUSTOMER_ROLE_MISMATCH", "User is not a customer", HttpStatus.BAD_REQUEST);
-        }
-        return user;
-    }
 
     private AdminCustomerLedgerDto mapToLedgerDto(User user) {
         CustomerProfile profile = customerProfileRepository.findByUserId(user.getId()).orElse(null);
@@ -156,6 +148,9 @@ public class AdminCustomerServiceImpl implements AdminCustomerService {
 
         String state = resolveAccountState(user);
         String customerId = buildCustomerId(user.getId());
+        boolean blocked = user.isBlocked();
+        PreviousDeletionLookup.Info prev = previousDeletionLookup.forPhone(user.getPhone(), UserRole.CUSTOMER.name());
+
         return AdminCustomerLedgerDto.builder()
                 .customerId(customerId)
                 .userId(user.getId())
@@ -167,30 +162,58 @@ public class AdminCustomerServiceImpl implements AdminCustomerService {
                 .lifetimeOutlay(lifetime != null ? lifetime : BigDecimal.ZERO)
                 .registrationDate(user.getCreatedAt())
                 .accountState(state)
-                .isBlocked(user.isBlocked())
+                .isBlocked(blocked)
                 .isVerified(user.isVerified())
+                .blockedReason(blocked ? user.getBlockedReason() : null)
+                .blockedAt(blocked ? user.getBlockedAt() : null)
+                .payoutsOnHold(blocked && user.isPayoutsOnHold())
+                .previouslyDeleted(prev.previouslyDeleted())
+                .previousDeletionCount(prev.count())
+                .lastDeletedAt(prev.lastDeletedAt())
                 .build();
     }
 
-    private ModerationLedgerRowDto mapToModerationRow(User user) {
+    /**
+     * Flags and infraction now come from what admin actually recorded (the block history), instead of a
+     * label guessed from the number of cancelled orders. Cancelled orders are shown as their own real number.
+     */
+    private ModerationLedgerRowDto mapToModerationRow(User user, Map<UUID, Long> blockCounts,
+                                                      Map<UUID, AccountBlockLog> latestBlock) {
         CustomerProfile profile = customerProfileRepository.findByUserId(user.getId()).orElse(null);
 
         long cancelledOrders = orderRepository.countByUserIdAndStatus(user.getId(), OrderStatus.CANCELLED);
-        int flagsRaised = (int) Math.min(cancelledOrders * 2, 15); // derive flags from cancelled orders stub
+        boolean blocked = user.isBlocked();
 
-        String infraction = resolveInfraction(flagsRaised, user.isBlocked());
-        String state = user.isBlocked() ? "Blocked" : "Active";
-        String customerId = buildCustomerId(user.getId());
+        long timesBlocked = blockCounts.getOrDefault(user.getId(), 0L);
+        if (blocked && timesBlocked == 0) {
+            timesBlocked = 1; // blocked before reasons were recorded
+        }
+        AccountBlockLog last = latestBlock.get(user.getId());
+
+        String infraction;
+        if (blocked) {
+            infraction = (user.getBlockedReason() != null && !user.getBlockedReason().isBlank())
+                    ? user.getBlockedReason() : "Blocked (no reason recorded)";
+        } else if (last != null) {
+            String why = (last.getReason() != null && !last.getReason().isBlank()) ? last.getReason() : "no reason recorded";
+            infraction = "None (previously blocked " + DAY.format(last.getCreatedAt()) + ": " + why + ")";
+        } else {
+            infraction = "None";
+        }
 
         return ModerationLedgerRowDto.builder()
-                .customerId(customerId)
+                .customerId(buildCustomerId(user.getId()))
                 .userId(user.getId())
                 .fullName(profile != null ? profile.getFullName() : null)
                 .email(user.getEmail())
-                .flagsRaised(flagsRaised)
+                .flagsRaised((int) timesBlocked)
                 .primaryInfraction(infraction)
-                .accountState(state)
-                .isBlocked(user.isBlocked())
+                .accountState(blocked ? "Blocked" : "Active")
+                .isBlocked(blocked)
+                .cancelledOrders(cancelledOrders)
+                .blockedReason(blocked ? user.getBlockedReason() : null)
+                .blockedAt(blocked ? user.getBlockedAt() : null)
+                .payoutsOnHold(blocked && user.isPayoutsOnHold())
                 .build();
     }
 
@@ -202,13 +225,5 @@ public class AdminCustomerServiceImpl implements AdminCustomerService {
         if (user.isBlocked()) return "Suspended";
         if (!user.isVerified()) return "Inactive";
         return "Active";
-    }
-
-    private String resolveInfraction(int flags, boolean isBlocked) {
-        if (flags == 0) return "None";
-        if (isBlocked && flags >= 8) return "Repeated cancellation abuse";
-        if (flags >= 10) return "Promo code manipulation";
-        if (flags >= 3) return "Multiple payment failures";
-        return "Suspicious location change";
     }
 }

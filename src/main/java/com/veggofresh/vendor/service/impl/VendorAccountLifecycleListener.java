@@ -4,6 +4,7 @@ import com.veggofresh.platform.event.UserAccountPurgedEvent;
 import com.veggofresh.platform.event.UserReactivatedEvent;
 import com.veggofresh.platform.storage.CloudinaryService;
 import com.veggofresh.vendor.repository.ShopRepository;
+import com.veggofresh.vendor.repository.VendorListingRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.event.EventListener;
@@ -20,6 +21,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class VendorAccountLifecycleListener {
 
     private final ShopRepository shopRepository;
+    private final VendorListingRepository vendorListingRepository;
     private final CloudinaryService cloudinaryService;
 
     /** Login within the reactivation window -- restore the shop row untouched. */
@@ -32,7 +34,9 @@ public class VendorAccountLifecycleListener {
             if (shop.isDeleted()) {
                 shop.setDeletedAt(null);
                 shopRepository.save(shop);
-                log.info("Shop reactivated for owner {}", event.getUserId());
+                // Bring back the products that were switched off by the account deletion (and only those).
+                int relisted = vendorListingRepository.relistAfterReactivation(shop.getId());
+                log.info("Shop reactivated for owner {}; relisted {} listing(s)", event.getUserId(), relisted);
             }
         });
     }

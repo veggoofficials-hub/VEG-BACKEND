@@ -277,7 +277,7 @@ public class ProductCatalogServiceImpl implements ProductCatalogService {
             return Set.of();
         }
         double radiusKm = resolveRadiusKm();
-        return vendorListingRepository.findByCatalogProductIdAndIsListedTrue(catalogProductId).stream()
+        return vendorListingRepository.findListedWithLiveShopByCatalogProductId(catalogProductId).stream()
                 .map(VendorListing::getShop)
                 .filter(shop -> isShopEligible(shop, latitude, longitude, radiusKm))
                 .map(Shop::getId)
@@ -538,9 +538,10 @@ public class ProductCatalogServiceImpl implements ProductCatalogService {
     }
 
     private boolean isShopEligible(Shop shop, double latitude, double longitude, double radiusKm) {
-        // No explicit soft-delete check needed here -- @Where(clause = "deleted_at IS
-        // NULL") on Shop already excludes deleted rows at the query/relation level.
-        if (shop == null) return false;
+        // @Where on Shop only filters when a Shop is LOADED; a lazy listing.getShop() proxy of a
+        // soft-deleted shop would throw instead of being null. Callers therefore pass shops that came
+        // from a query (shopRepository / findListedWithLiveShopByCatalogProductId), never a bare proxy.
+        if (shop == null || shop.isDeleted()) return false;
         if (!shop.isOnline() || shop.getKycStatus() != KycStatus.APPROVED) return false;
         if (shop.getLatitude() == null || shop.getLongitude() == null) return false;
         double distance = calculateDistanceInKm(latitude, longitude, shop.getLatitude(), shop.getLongitude());
@@ -564,7 +565,8 @@ public class ProductCatalogServiceImpl implements ProductCatalogService {
     private Optional<ProductDto> toProductDtoIfEligible(ProductResponseDto product, double latitude, double longitude) {
         double radiusKm = resolveRadiusKm();
 
-        List<VendorListing> listings = vendorListingRepository.findByCatalogProductIdAndIsListedTrue(product.getId());
+        // Live-shop join: listings of a soft-deleted shop are excluded in SQL (see the repository method).
+        List<VendorListing> listings = vendorListingRepository.findListedWithLiveShopByCatalogProductId(product.getId());
 
         Shop nearestEligible = null;
         double nearestDistance = Double.MAX_VALUE;

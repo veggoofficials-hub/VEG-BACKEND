@@ -44,4 +44,12 @@ public class VendorListing extends BaseEntity {
 
     @Column(name = "is_listed", nullable = false)
     private boolean isListed = false;
+
+    /**
+     * True only while this listing is switched off BECAUSE the vendor deleted their account (set by
+     * VendorAccountDeletionServiceImpl). Lets reactivation relist exactly those rows and leave alone
+     * anything the vendor had unlisted on purpose before deleting.
+     */
+    @Column(name = "unlisted_by_account_deletion", nullable = false)
+    private boolean unlistedByAccountDeletion = false;
 }

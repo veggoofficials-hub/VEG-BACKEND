@@ -11,6 +11,7 @@ import com.veggofresh.platform.exception.BusinessException;
 import com.veggofresh.vendor.dto.request.AccountDeletionRequestDto;
 import com.veggofresh.vendor.entity.Shop;
 import com.veggofresh.vendor.repository.ShopRepository;
+import com.veggofresh.vendor.repository.VendorListingRepository;
 import com.veggofresh.vendor.service.VendorAccountDeletionService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -32,6 +33,7 @@ public class VendorAccountDeletionServiceImpl implements VendorAccountDeletionSe
             List.of(PayoutRequestStatus.PENDING, PayoutRequestStatus.APPROVED, PayoutRequestStatus.PROCESSING);
 
     private final ShopRepository shopRepository;
+    private final VendorListingRepository vendorListingRepository;
     private final CustomerOrderService customerOrderService;
     private final WalletService walletService;
     private final PayoutRequestRepository payoutRequestRepository;
@@ -85,6 +87,12 @@ public class VendorAccountDeletionServiceImpl implements VendorAccountDeletionSe
         //    fields stay untouched here; they are only scrubbed once the window really expires. --
         shop.softDelete();
         shopRepository.save(shop);
+
+        // -- Take the shop's products off the shelf in the same transaction. Listings are NOT soft-deleted
+        //    with the shop, so without this they keep pointing at a shop Hibernate can no longer load and
+        //    every product page that touches them fails. Flagged so reactivation can relist exactly these. --
+        int unlisted = vendorListingRepository.unlistAllForAccountDeletion(shop.getId());
+        log.info("Unlisted {} listing(s) of shop {} because its owner deleted the account", unlisted, shop.getId());
 
         log.info("Vendor self-deleted account: user={}, shop={}, retentionDays={}", ownerUserId, shop.getId(), request.getRetentionDays());
     }

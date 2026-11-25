@@ -128,7 +128,8 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiResponse<Void>> handleEntityNotFoundException(
             EntityNotFoundException ex) {
 
-        log.warn("Entity not found: {}", ex.getMessage());
+        // Full exception (stack trace) on purpose: the bare message hides WHICH endpoint/code path hit it.
+        log.warn("Entity not found: {}", ex.getMessage(), ex);
         return ResponseEntity
                 .status(HttpStatus.NOT_FOUND)
                 .body(ApiResponse.error(ex.getMessage(), "ENTITY_NOT_FOUND"));

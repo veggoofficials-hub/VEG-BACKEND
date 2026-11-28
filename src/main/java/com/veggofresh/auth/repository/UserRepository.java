@@ -21,6 +21,23 @@ public interface UserRepository extends JpaRepository<User, UUID> {
      * role (migration V164), so a phone-only lookup would be ambiguous and has been removed on purpose.
      */
     Optional<User> findByPhoneAndRole(String phone, UserRole role);
+
+    /**
+     * Purged users that still have bank accounts, KYC documents or change-request documents/values left in the
+     * live tables (accounts purged before the archive existed). Columns: user id, role. Deliberately sees
+     * deleted rows -- purged users and their shops are soft-deleted -- hence the IncludingDeleted name.
+     */
+    @Query(value = "SELECT u.id, u.role FROM users u WHERE u.is_purged = TRUE AND ("
+            + " EXISTS (SELECT 1 FROM user_bank_accounts b WHERE b.user_id = u.id AND b.deleted_at IS NULL)"
+            + " OR EXISTS (SELECT 1 FROM vendor_documents d JOIN vendor_shops s ON s.id = d.shop_id"
+            + "            WHERE s.owner_user_id = u.id AND d.deleted_at IS NULL)"
+            + " OR EXISTS (SELECT 1 FROM delivery_documents dd"
+            + "            WHERE dd.delivery_partner_user_id = u.id AND dd.deleted_at IS NULL)"
+            + " OR EXISTS (SELECT 1 FROM delivery_change_requests c"
+            + "            WHERE c.delivery_partner_user_id = u.id AND c.deleted_at IS NULL"
+            + "              AND (c.document_public_id IS NOT NULL OR c.previous_values IS NOT NULL"
+            + "                   OR length(c.requested_values) > 2)))", nativeQuery = true)
+    List<Object[]> findPurgedUsersWithLeftoverDataIncludingDeleted();
     Optional<User> findByEmail(String email);
 
     // ── Account deletion (migration V175) ───────────────────────────────────

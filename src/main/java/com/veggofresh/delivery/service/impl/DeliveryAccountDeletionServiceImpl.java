@@ -3,8 +3,12 @@ package com.veggofresh.delivery.service.impl;
 import com.veggofresh.auth.service.UserAccountService;
 import com.veggofresh.delivery.dto.request.AccountDeletionRequestDto;
 import com.veggofresh.delivery.entity.DeliveryAssignmentStatus;
+import com.veggofresh.delivery.entity.DeliveryChangeRequest;
+import com.veggofresh.delivery.entity.DeliveryChangeRequestStatus;
 import com.veggofresh.delivery.entity.DeliveryPartnerProfile;
 import com.veggofresh.delivery.repository.DeliveryAssignmentRepository;
+import com.veggofresh.delivery.repository.DeliveryChangeRequestRepository;
+import com.veggofresh.delivery.repository.DeliveryOnlineSessionRepository;
 import com.veggofresh.delivery.repository.DeliveryPartnerProfileRepository;
 import com.veggofresh.delivery.service.DeliveryAccountDeletionService;
 import com.veggofresh.payment.dto.WalletBalanceDto;
@@ -19,6 +23,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
@@ -42,6 +47,8 @@ public class DeliveryAccountDeletionServiceImpl implements DeliveryAccountDeleti
     private final WalletService walletService;
     private final PayoutRequestRepository payoutRequestRepository;
     private final UserAccountService userAccountService;
+    private final DeliveryOnlineSessionRepository sessionRepository;
+    private final DeliveryChangeRequestRepository changeRequestRepository;
 
     @Override
     @Transactional
@@ -73,6 +80,24 @@ public class DeliveryAccountDeletionServiceImpl implements DeliveryAccountDeleti
             throw new BusinessException("ACCOUNT_DELETE_PAYOUT_IN_FLIGHT",
                     "You have a payout request still being processed. Please wait for it to complete before deleting your account.",
                     HttpStatus.CONFLICT);
+        }
+
+        // -- Take the partner off the road. Offline + close the open online session (otherwise online time and
+        //    earnings stats keep counting), and cancel pending change requests (otherwise they would sit in
+        //    the admin queue for a profile nobody can open any more). If the partner reactivates they stay
+        //    offline and go online themselves. --
+        profile.setOnline(false);
+        sessionRepository.findByDeliveryPartnerUserIdAndEndedAtIsNull(userId).ifPresent(session -> {
+            session.setEndedAt(Instant.now());
+            sessionRepository.save(session);
+        });
+        Instant cancelledAt = Instant.now();
+        for (DeliveryChangeRequest pending : changeRequestRepository
+                .findByDeliveryPartnerUserIdAndStatus(userId, DeliveryChangeRequestStatus.PENDING)) {
+            pending.setStatus(DeliveryChangeRequestStatus.CANCELLED);
+            pending.setDecisionReason("Account deleted by the partner");
+            pending.setDecidedAt(cancelledAt);
+            changeRequestRepository.save(pending);
         }
 
         // -- Stats snapshot for the permanent audit log -------------------------

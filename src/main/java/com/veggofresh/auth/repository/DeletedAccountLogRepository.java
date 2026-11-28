@@ -21,6 +21,15 @@ public interface DeletedAccountLogRepository extends JpaRepository<DeletedAccoun
     /** How many times this phone + role has been self-deleted (the log is never purged). */
     long countByPhoneAndRole(String phone, String role);
 
+    /** Latest deletion of one user (the one being purged / the one to show). */
+    Optional<DeletedAccountLog> findFirstByUserIdOrderByCreatedAtDesc(UUID userId);
+
+    /** Deletions of several users, newest first -- callers keep the first row per user. */
+    List<DeletedAccountLog> findByUserIdInOrderByCreatedAtDesc(java.util.Collection<UUID> userIds);
+
+    /** Every deletion of this phone in this role (all earlier accounts of the same person). */
+    List<DeletedAccountLog> findByPhoneAndRole(String phone, String role);
+
     Optional<DeletedAccountLog> findFirstByPhoneAndRoleOrderByCreatedAtDesc(String phone, String role);
 
     /** Newest deletion first; used to flag "previously deleted" on the admin user screens. */

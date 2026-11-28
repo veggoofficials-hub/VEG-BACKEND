@@ -33,6 +33,12 @@ public class ComplaintResponseDto {
     private String userName;
     private String userPhone;
     private String userEmail;
+    /**
+     * ACTIVE (the account exists), DELETED (deleted, still inside its reactivation window) or PURGED
+     * (permanently removed). {@code null} when unknown. For DELETED/PURGED the name, phone and email above
+     * come from the permanent deletion log, so the complaint never shows blank details.
+     */
+    private String accountStatus;
 
     // Complaint Content
     private ComplaintCategory category;

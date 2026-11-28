@@ -1,5 +1,6 @@
 package com.veggofresh.customer.service.impl;
 
+import com.veggofresh.coupon.repository.CustomerCouponSelectionRepository;
 import com.veggofresh.customer.repository.AddressRepository;
 import com.veggofresh.customer.repository.CartRepository;
 import com.veggofresh.customer.repository.CustomerProfileRepository;
@@ -28,6 +29,7 @@ public class CustomerAccountLifecycleListener {
     private final WishlistRepository wishlistRepository;
     private final AddressRepository addressRepository;
     private final CloudinaryService cloudinaryService;
+    private final CustomerCouponSelectionRepository couponSelectionRepository;
 
     /** Login within the reactivation window -- restore the profile row untouched. */
     @EventListener
@@ -60,6 +62,9 @@ public class CustomerAccountLifecycleListener {
                 .forEach(wishlistRepository::delete);
         addressRepository.findByUserId(event.getUserId())
                 .forEach(addressRepository::delete);
+        // The coupon the customer was "holding" for checkout -- meaningless once the account is gone.
+        couponSelectionRepository.findByUserId(event.getUserId())
+                .ifPresent(couponSelectionRepository::delete);
 
         customerProfileRepository.findByUserIdIncludingDeleted(event.getUserId()).ifPresent(profile -> {
             cloudinaryService.deleteQuietly(profile.getAvatarPublicId());

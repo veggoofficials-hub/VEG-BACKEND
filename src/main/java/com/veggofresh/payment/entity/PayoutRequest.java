@@ -44,6 +44,17 @@ public class PayoutRequest extends BaseEntity {
     @Column(name = "bank_account_id")
     private UUID bankAccountId;
 
+    /**
+     * Bank name and last 4 digits of the account this payout was sent to, saved when the payout is requested.
+     * Masked, so safe to keep forever: the full account number is archived when the user is purged, and old
+     * payouts still show which account was paid.
+     */
+    @Column(name = "bank_name_snapshot", length = 100)
+    private String bankNameSnapshot;
+
+    @Column(name = "bank_account_last4", length = 4)
+    private String bankAccountLast4;
+
     /** Razorpay Payout id once the real transfer is initiated. */
     @Column(name = "razorpay_payout_id", length = 64)
     private String razorpayPayoutId;

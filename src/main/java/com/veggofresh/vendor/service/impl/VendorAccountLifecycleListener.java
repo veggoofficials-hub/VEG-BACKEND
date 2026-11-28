@@ -23,6 +23,7 @@ public class VendorAccountLifecycleListener {
     private final ShopRepository shopRepository;
     private final VendorListingRepository vendorListingRepository;
     private final CloudinaryService cloudinaryService;
+    private final VendorAccountArchiver vendorAccountArchiver;
 
     /** Login within the reactivation window -- restore the shop row untouched. */
     @EventListener
@@ -51,6 +52,8 @@ public class VendorAccountLifecycleListener {
     @Transactional
     public void onPurged(UserAccountPurgedEvent event) {
         if (!"VENDOR".equals(event.getRole())) return;
+        // Bank details and KYC documents are moved to the archive BEFORE the live fields are cleared below.
+        vendorAccountArchiver.archiveAndRemove(event.getUserId());
 
         shopRepository.findByOwnerUserIdIncludingDeleted(event.getUserId()).ifPresent(shop -> {
             cloudinaryService.deleteQuietly(shop.getProfileImagePublicId());

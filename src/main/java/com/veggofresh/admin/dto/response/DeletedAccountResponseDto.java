@@ -49,4 +49,6 @@ public class DeletedAccountResponseDto {
 
     /** How many times this phone + role has been self-deleted (including this one). */
     private int previousDeletions;
+    /** Status of the archived data of a PURGED account (null when not purged or nothing was archived). */
+    private com.veggofresh.archive.dto.ArchiveSummaryDto archive;
 }

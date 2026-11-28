@@ -27,6 +27,10 @@ public class PayoutResponseDto {
     private String adminNotes;
     private String failureReason;
     private UserBankAccountDto bankAccount;
+    /** Bank name saved on the payout when it was requested (still present after the bank account is archived). */
+    private String bankNameSnapshot;
+    /** Last 4 digits of the account the payout was sent to. */
+    private String bankAccountLast4;
     private Instant processedAt;
     private Instant createdAt;
 }

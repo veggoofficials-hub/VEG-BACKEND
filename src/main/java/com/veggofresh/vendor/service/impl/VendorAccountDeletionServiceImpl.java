@@ -86,6 +86,9 @@ public class VendorAccountDeletionServiceImpl implements VendorAccountDeletionSe
         // -- Soft-delete our own Shop row (filtered by @Where -- see Shop.java). Personal and financial
         //    fields stay untouched here; they are only scrubbed once the window really expires. --
         shop.softDelete();
+        // Offline as well: if the owner reactivates, the shop must NOT jump back online by itself -- they go
+        // online when they are ready for orders (same rule as the admin-block flow).
+        shop.setOnline(false);
         shopRepository.save(shop);
 
         // -- Take the shop's products off the shelf in the same transaction. Listings are NOT soft-deleted

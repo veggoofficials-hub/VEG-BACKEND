@@ -51,10 +51,27 @@ public interface CouponRedemptionRepository extends JpaRepository<CouponRedempti
     long countCustomerOrders(@Param("userId") UUID userId);
 
     /**
+     * Same as {@link #countCustomerOrders} but across all earlier accounts of the same customer (same phone), so
+     * deleting and re-registering does not reset "new customer" / "returning customer" eligibility.
+     */
+    @Query(value = "select count(*) from orders where user_id in (:userIds) and status <> 'CANCELLED' and deleted_at is null",
+            nativeQuery = true)
+    long countCustomerOrdersForAccounts(@Param("userIds") java.util.Collection<UUID> userIds);
+
+    /** Same as {@link #countActiveUsesByCustomer} but across all earlier accounts of the same customer. */
+    @Query("select count(r) from CouponRedemption r where r.couponId = :couponId and r.userId in :userIds "
+            + "and r.releasedAt is null and r.createdAt >= :from and r.createdAt < :to")
+    long countActiveUsesByCustomerAccounts(@Param("couponId") UUID couponId,
+                                           @Param("userIds") java.util.Collection<UUID> userIds,
+                                           @Param("from") Instant from, @Param("to") Instant to);
+
+    /**
      * Admin "who used it" list. Columns: redemption id, user id, phone, total discount, used at, released at,
      * order numbers (comma separated).
      */
-    @Query(value = "select r.id, r.user_id, u.phone, r.total_discount, r.created_at, r.released_at, "
+    @Query(value = "select r.id, r.user_id, "
+            + "coalesce((select l.phone from deleted_account_log l where l.user_id = r.user_id "
+            + "         order by l.created_at desc limit 1), u.phone), r.total_discount, r.created_at, r.released_at, "
             + "coalesce((select string_agg(od.order_number, ', ' order by od.created_at) "
             + "          from coupon_redemption_orders cro join orders od on od.id = cro.order_id "
             + "          where cro.redemption_id = r.id), '') "

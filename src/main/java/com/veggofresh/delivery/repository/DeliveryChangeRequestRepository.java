@@ -22,6 +22,10 @@ public interface DeliveryChangeRequestRepository extends JpaRepository<DeliveryC
     /** All of a rider's requests, newest first. */
     List<DeliveryChangeRequest> findByDeliveryPartnerUserIdOrderByCreatedAtDescIdDesc(UUID deliveryPartnerUserId);
 
+    /** All requests of one partner in one status (used to cancel the PENDING ones when the account is deleted). */
+    List<DeliveryChangeRequest> findByDeliveryPartnerUserIdAndStatus(UUID deliveryPartnerUserId,
+                                                                     DeliveryChangeRequestStatus status);
+
     /** Admin list across all riders. {@code status} and {@code section} are optional. */
     @Query("SELECT c FROM DeliveryChangeRequest c WHERE " +
            "(:status IS NULL OR c.status = :status) AND " +

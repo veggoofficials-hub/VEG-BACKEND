@@ -94,6 +94,8 @@ public class PayoutServiceImpl implements PayoutService {
         request.setUserRole(userRole != null ? userRole.toUpperCase() : "VENDOR");
         request.setAmount(dto.getAmount());
         request.setBankAccountId(bankAccount.getId());
+        request.setBankNameSnapshot(bankAccount.getBankName());
+        request.setBankAccountLast4(last4(bankAccount.getAccountNumber()));
         request.setStatus(PayoutRequestStatus.PENDING);
         payoutRequestRepository.save(request);
 
@@ -393,6 +395,15 @@ public class PayoutServiceImpl implements PayoutService {
         }
     }
 
+    /** Last 4 characters of an account number (the whole value when it is shorter), or null. */
+    private static String last4(String accountNumber) {
+        if (accountNumber == null || accountNumber.isBlank()) {
+            return null;
+        }
+        String v = accountNumber.trim();
+        return v.length() <= 4 ? v : v.substring(v.length() - 4);
+    }
+
     private PayoutResponseDto mapToDto(PayoutRequest request, UserBankAccount bankAccount) {
         UserBankAccountDto bankDto = bankAccount != null ? UserBankAccountDto.builder()
                 .id(bankAccount.getId())
@@ -414,6 +425,8 @@ public class PayoutServiceImpl implements PayoutService {
                 .adminNotes(request.getAdminNotes())
                 .failureReason(request.getFailureReason())
                 .bankAccount(bankDto)
+                .bankNameSnapshot(request.getBankNameSnapshot())
+                .bankAccountLast4(request.getBankAccountLast4())
                 .processedAt(request.getProcessedAt())
                 .createdAt(request.getCreatedAt())
                 .build();

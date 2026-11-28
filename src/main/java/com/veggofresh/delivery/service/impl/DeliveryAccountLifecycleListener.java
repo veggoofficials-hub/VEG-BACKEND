@@ -21,6 +21,7 @@ public class DeliveryAccountLifecycleListener {
 
     private final DeliveryPartnerProfileRepository deliveryPartnerProfileRepository;
     private final CloudinaryService cloudinaryService;
+    private final DeliveryAccountArchiver deliveryAccountArchiver;
 
     /** Login within the reactivation window -- restore the profile row untouched. */
     @EventListener
@@ -47,6 +48,9 @@ public class DeliveryAccountLifecycleListener {
     @Transactional
     public void onPurged(UserAccountPurgedEvent event) {
         if (!"DELIVERY".equals(event.getRole())) return;
+        // Bank details, emergency contact, KYC documents and change-request documents are moved to the
+        // archive BEFORE the live fields are cleared below.
+        deliveryAccountArchiver.archiveAndRemove(event.getUserId());
 
         deliveryPartnerProfileRepository.findByUserIdIncludingDeleted(event.getUserId()).ifPresent(profile -> {
             cloudinaryService.deleteQuietly(profile.getAvatarPublicId());

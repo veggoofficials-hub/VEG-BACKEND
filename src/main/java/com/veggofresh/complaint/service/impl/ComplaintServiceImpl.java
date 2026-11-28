@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.veggofresh.auth.entity.User;
 import com.veggofresh.auth.entity.UserRole;
 import com.veggofresh.auth.repository.UserRepository;
+import com.veggofresh.auth.service.DeletedAccountIdentityService;
 import com.veggofresh.complaint.dto.AdminUpdateComplaintStatusDto;
 import com.veggofresh.complaint.dto.ComplaintResponseDto;
 import com.veggofresh.complaint.dto.ComplaintStatsResponseDto;
@@ -52,6 +53,7 @@ public class ComplaintServiceImpl implements ComplaintService {
 
     private final ComplaintRepository complaintRepository;
     private final UserRepository userRepository;
+    private final DeletedAccountIdentityService deletedAccountIdentityService;
     private final CustomerProfileRepository customerProfileRepository;
     private final ShopRepository shopRepository;
     private final DeliveryPartnerProfileRepository deliveryPartnerProfileRepository;
@@ -320,6 +322,19 @@ public class ComplaintServiceImpl implements ComplaintService {
             User user = userOpt.get();
             builder.userPhone(user.getPhone());
             builder.userEmail(user.getEmail());
+        }
+
+        if (userOpt.isPresent()) {
+            builder.accountStatus("ACTIVE");
+        } else {
+            // The account was deleted or purged, so the live lookups below find nothing. Fall back to the
+            // permanent deletion log: it kept who this was, so the complaint is never shown with blanks.
+            deletedAccountIdentityService.findByUserId(userId).ifPresent(identity -> {
+                builder.accountStatus(identity.status());
+                builder.userPhone(identity.phone());
+                builder.userEmail(identity.email());
+                builder.userName(identity.fullName());
+            });
         }
 
         if (role == UserRole.CUSTOMER) {

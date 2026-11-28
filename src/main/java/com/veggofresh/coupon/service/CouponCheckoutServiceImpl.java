@@ -50,6 +50,7 @@ public class CouponCheckoutServiceImpl implements CouponCheckoutService {
     private final CouponRedemptionRepository redemptionRepository;
     private final CouponRedemptionOrderRepository redemptionOrderRepository;
     private final CustomerCouponSelectionRepository selectionRepository;
+    private final CouponCustomerIdentity customerIdentity;
 
     /** Seam for tests. */
     Instant now() {
@@ -65,7 +66,7 @@ public class CouponCheckoutServiceImpl implements CouponCheckoutService {
     public List<CustomerCouponDto> listOffers(UUID userId) {
         Instant now = now();
         UUID heldId = selectionRepository.findByUserId(userId).map(CustomerCouponSelection::getCouponId).orElse(null);
-        LazyLong customerOrders = new LazyLong(() -> redemptionRepository.countCustomerOrders(userId));
+        LazyLong customerOrders = new LazyLong(() -> redemptionRepository.countCustomerOrdersForAccounts(customerIdentity.accountIds(userId)));
 
         List<CustomerCouponDto> out = new ArrayList<>();
         for (Coupon c : couponRepository.findListedOffers(now)) {
@@ -103,7 +104,7 @@ public class CouponCheckoutServiceImpl implements CouponCheckoutService {
         }
         Coupon coupon = couponRepository.findByCode(normalized)
                 .orElseThrow(() -> new BusinessException(INVALID_CODE, INVALID_MESSAGE, HttpStatus.BAD_REQUEST));
-        Failure f = checkStatic(coupon, userId, now(), new LazyLong(() -> redemptionRepository.countCustomerOrders(userId)));
+        Failure f = checkStatic(coupon, userId, now(), new LazyLong(() -> redemptionRepository.countCustomerOrdersForAccounts(customerIdentity.accountIds(userId))));
         if (f != null) {
             throw new BusinessException(f.code(), f.message(), HttpStatus.BAD_REQUEST);
         }
@@ -126,7 +127,7 @@ public class CouponCheckoutServiceImpl implements CouponCheckoutService {
     public java.util.Set<String> usableCodes(UUID userId, java.util.Collection<String> codes) {
         java.util.Set<String> usable = new java.util.LinkedHashSet<>();
         Instant now = now();
-        LazyLong customerOrders = new LazyLong(() -> redemptionRepository.countCustomerOrders(userId));
+        LazyLong customerOrders = new LazyLong(() -> redemptionRepository.countCustomerOrdersForAccounts(customerIdentity.accountIds(userId)));
         for (String raw : codes) {
             String code = normalize(raw);
             if (code == null || usable.contains(code)) {
@@ -164,7 +165,7 @@ public class CouponCheckoutServiceImpl implements CouponCheckoutService {
         Instant now = now();
         Coupon c = couponRepository.findByCode(held.code()).orElse(null);
         Failure f = c == null ? new Failure(INVALID_CODE, INVALID_MESSAGE)
-                : checkStatic(c, userId, now, new LazyLong(() -> redemptionRepository.countCustomerOrders(userId)));
+                : checkStatic(c, userId, now, new LazyLong(() -> redemptionRepository.countCustomerOrdersForAccounts(customerIdentity.accountIds(userId))));
         if (f != null) {
             return new CouponPreview(null, f.message(), java.util.Collections.emptyMap(), java.util.Collections.emptyMap());
         }
@@ -307,7 +308,7 @@ public class CouponCheckoutServiceImpl implements CouponCheckoutService {
             return CouponQuote.invalid(held.code(), INVALID_CODE, INVALID_MESSAGE);
         }
         Coupon c = found.get();
-        Failure f = checkStatic(c, userId, now(), new LazyLong(() -> redemptionRepository.countCustomerOrders(userId)));
+        Failure f = checkStatic(c, userId, now(), new LazyLong(() -> redemptionRepository.countCustomerOrdersForAccounts(customerIdentity.accountIds(userId))));
         if (f != null) {
             return CouponQuote.invalid(c.getCode(), f.code(), f.message());
         }
@@ -412,7 +413,7 @@ public class CouponCheckoutServiceImpl implements CouponCheckoutService {
         }
         if (c.getPerCustomerLimit() != null && c.getPerCustomerPeriod() != null) {
             CouponWindows.Window w = CouponWindows.of(c.getPerCustomerPeriod(), now);
-            long used = redemptionRepository.countActiveUsesByCustomer(c.getId(), userId, w.from(), w.to());
+            long used = redemptionRepository.countActiveUsesByCustomerAccounts(c.getId(), customerIdentity.accountIds(userId), w.from(), w.to());
             if (used >= c.getPerCustomerLimit()) {
                 String when = CouponWindows.describe(c.getPerCustomerPeriod());
                 return new Failure("COUPON_CUSTOMER_LIMIT_REACHED", when.isEmpty()

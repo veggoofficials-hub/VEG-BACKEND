@@ -8,6 +8,7 @@ import com.veggofresh.auth.entity.UserRole;
 import com.veggofresh.auth.repository.DeletedAccountLogRepository;
 import com.veggofresh.auth.repository.UserRepository;
 import com.veggofresh.platform.exception.BusinessException;
+import com.veggofresh.archive.service.PurgedAccountArchiveService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -29,6 +30,7 @@ public class AdminDeletedAccountServiceImpl implements AdminDeletedAccountServic
 
     private final DeletedAccountLogRepository deletedAccountLogRepository;
     private final UserRepository userRepository;
+    private final PurgedAccountArchiveService archiveService;
 
     @Override
     public Page<DeletedAccountResponseDto> list(String role, String search, String status, Pageable pageable) {
@@ -103,6 +105,7 @@ public class AdminDeletedAccountServiceImpl implements AdminDeletedAccountServic
                 .newUserId(newUserId)
                 .returnedAt(returnedAt)
                 .previousDeletions((int) deletedAccountLogRepository.countByPhoneAndRole(l.getPhone(), l.getRole()))
+                .archive(archiveService.summaryFor(l))
                 .build();
     }
 

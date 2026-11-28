@@ -26,4 +26,10 @@ public class AuthTokenResponseDto {
 
     /** {@code true} when new payout requests are on hold for this blocked account. */
     private boolean payoutsOnHold;
+    /**
+     * {@code true} ONLY on the login that just restored an account the person had deleted (inside the window
+     * they chose). Show a one-time "Welcome back" message. Always {@code false} on normal logins and on
+     * token refresh.
+     */
+    private boolean reactivated;
 }

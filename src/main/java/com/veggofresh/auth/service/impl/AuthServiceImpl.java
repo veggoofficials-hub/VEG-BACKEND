@@ -123,14 +123,15 @@ public class AuthServiceImpl implements AuthService {
 
         // Find (or restore, or create) the account of THIS phone number in THIS role.
         // A BLOCKED account still logs in: it is "restricted mode" -- see AccountAccessService.
-        User user = findOrCreateUser(phone, request.getRole());
+        LoginAccount account = findOrCreateUser(phone, request.getRole());
+        User user = account.user();
 
         if (!user.isVerified()) {
             user.setVerified(true);
             userRepository.save(user);
         }
 
-        return generateTokens(user);
+        return generateTokens(user, account.reactivated());
     }
 
     @Override
@@ -142,14 +143,15 @@ public class AuthServiceImpl implements AuthService {
 
         // Find (or restore, or create) the account of this verified phone number in the requested role.
         // A BLOCKED account still logs in: it is "restricted mode" -- see AccountAccessService.
-        User user = findOrCreateUser(phone, request.getRole());
+        LoginAccount account = findOrCreateUser(phone, request.getRole());
+        User user = account.user();
 
         if (!user.isVerified()) {
             user.setVerified(true);
             userRepository.save(user);
         }
 
-        return generateTokens(user);
+        return generateTokens(user, account.reactivated());
     }
 
     @Override
@@ -234,10 +236,10 @@ public class AuthServiceImpl implements AuthService {
      * role, or creates it. An account that exists in ANOTHER role is never returned, so the token's role
      * always matches the app that is logging in.
      */
-    private User findOrCreateUser(String phone, UserRole role) {
+    private LoginAccount findOrCreateUser(String phone, UserRole role) {
         Optional<User> active = userRepository.findByPhoneAndRole(phone, role);
         if (active.isPresent()) {
-            return active.get();
+            return new LoginAccount(active.get(), false);
         }
 
         // No active account. If this person deleted their own account and is still inside the window they
@@ -245,17 +247,25 @@ public class AuthServiceImpl implements AuthService {
         // account an admin removed -- nothing is restored and a brand-new account is created below.
         Optional<User> restored = userAccountService.reactivateIfWithinWindow(phone, role);
         if (restored.isPresent()) {
-            return restored.get();
+            return new LoginAccount(restored.get(), true);
         }
 
         User newUser = new User();
         newUser.setPhone(phone);
         newUser.setRole(role);
         newUser.setVerified(true);
-        return userRepository.save(newUser);
+        return new LoginAccount(userRepository.save(newUser), false);
+    }
+
+    /** The account a login resolved to, and whether this very login just restored it from deletion. */
+    private record LoginAccount(User user, boolean reactivated) {
     }
 
     private AuthTokenResponseDto generateTokens(User user) {
+        return generateTokens(user, false);
+    }
+
+    private AuthTokenResponseDto generateTokens(User user, boolean reactivated) {
         String email = user.getEmail() != null ? user.getEmail() : "";
         String accessTokenStr = jwtTokenProvider.generateAccessToken(user.getId(), email, user.getRole().name());
         String refreshTokenStr = jwtTokenProvider.generateRefreshToken(user.getId(), email, user.getRole().name());
@@ -273,6 +283,7 @@ public class AuthServiceImpl implements AuthService {
                 .blockedReason(user.isBlocked() ? user.getBlockedReason() : null)
                 .blockedAt(user.isBlocked() ? user.getBlockedAt() : null)
                 .payoutsOnHold(user.isBlocked() && user.isPayoutsOnHold())
+                .reactivated(reactivated)
                 .build();
     }
 }
